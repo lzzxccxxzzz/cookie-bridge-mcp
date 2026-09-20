@@ -16,9 +16,18 @@ const httpMod = require('http');
 const API_PORT = 8000;
 const API_HOST = '127.0.0.1';
 let _state = null;
-let _queue = [];
-let _actionLog = [];
 let _stateLog = [];
+const CONTROL_DIR = fs.existsSync(path.join(__dirname, 'mod_api', 'control-schema.js'))
+  ? path.join(__dirname, 'mod_api') : path.join(__dirname, 'mods', 'local', 'mod_api');
+const CONTROL_SCHEMA = require(path.join(CONTROL_DIR, 'control-schema.js'));
+const _controlQueue = require(path.join(CONTROL_DIR, 'control-queue.js')).createQueue();
+function _enqueue(action) {
+  if (!_state || !_state.control || _state.control.api_version !== CONTROL_SCHEMA.version) {
+    throw {status: 503, message: 'Matching Cookie Bridge v3 renderer is not connected. Install all mod_api files and restart the game.'};
+  }
+  if (Date.now() - _state.timestamp > 15000) throw {status: 503, message: 'Game state is stale; no action was queued.'};
+  return _controlQueue.enqueue(action);
+}
 
 const BUILDINGS = ['Cursor','Grandma','Farm','Mine','Factory','Bank','Temple',
   'Wizard tower','Shipment','Alchemy lab','Portal','Time machine',
@@ -61,10 +70,19 @@ function _resHtml(res, html) {
   res.end(html);
 }
 function _readBody(req) {
-  return new Promise(resolve => {
-    let b = '';
-    req.on('data', c => b += c);
-    req.on('end', () => { try { resolve(JSON.parse(b)); } catch(_) { resolve({}); } });
+  return new Promise((resolve, reject) => {
+    let b = '', bytes = 0, exceeded = false;
+    req.setEncoding('utf8');
+    req.on('data', c => {
+      bytes += Buffer.byteLength(c, 'utf8');
+      if (bytes > 8 * 1024 * 1024) { exceeded = true; b = ''; return; }
+      if (!exceeded) b += c;
+    });
+    req.on('end', () => {
+      if (exceeded) return reject({status: 413, message: 'Request body exceeds 8 MiB.'});
+      try { resolve(b ? JSON.parse(b) : {}); } catch (_) { reject({status: 400, message: 'Malformed JSON.'}); }
+    });
+    req.on('error', reject);
   });
 }
 function _getState() {
@@ -902,6 +920,12 @@ setInterval(_runDbSave, _DB_MS);
 
 
 const ROUTES = [
+  ['GET', /^\/control\/screenshot$/, async(q,s)=>{const gameWindow=BrowserWindow.getAllWindows().find(w=>/\/src\/index\.html(?:[?#]|$)/.test(w.webContents.getURL()));if(!gameWindow)throw {status:503,message:'Cookie Clicker window is not ready.'};const capture=await gameWindow.webContents.capturePage();_res(s,200,{mimeType:'image/png',data:capture.toPNG().toString('base64'),timestamp:Date.now(),size:capture.getSize()});}],
+  ['GET', /^\/capabilities$/, (q,s)=>_res(s,200,{api_version:CONTROL_SCHEMA.version,renderer_version:_state&&_state.control&&_state.control.api_version,game_version:_state&&_state.control&&_state.control.game_version,state_age_ms:_state?Date.now()-_state.timestamp:null,actions:Object.values(CONTROL_SCHEMA.actions),unsupported:CONTROL_SCHEMA.unsupported})],
+  ['GET', /^\/control\/state$/, (q,s)=>{const st=_getState();if(!st.control)throw {status:503,message:'Full control renderer is not installed/loaded.'};_res(s,200,{...st.control,state_age_ms:Date.now()-st.timestamp});}],
+  ['GET', /^\/bridge\/(control-schema\.js|control-runtime\.js)$/, (q,s,p)=>{s.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});fs.createReadStream(path.join(CONTROL_DIR,p[0])).pipe(s);}],
+  ['POST', /^\/action\/results$/, async(q,s)=>{const body=await _readBody(q);_res(s,200,_controlQueue.acknowledge(body.results));}],
+  ['GET', /^\/action\/result\/([a-zA-Z0-9-]+)$/, (q,s,p)=>{const result=_controlQueue.get(p[0]);if(!result)throw {status:404,message:'Action result not found (expired history or server restart).'};_res(s,200,result);}],
   ['GET', /^\/img\/([^/]+)$/, (q,s,p)=>{ const fp=path.join(__dirname,'src','img',p[0]); if(!fs.existsSync(fp)){_res(s,404,{error:'not found'});return;} const ext=path.extname(fp).toLowerCase(); const ct={'.png':'image/png','.jpg':'image/jpeg','.gif':'image/gif','.mp3':'audio/mpeg'}[ext]||'application/octet-stream'; s.writeHead(200,{'Content-Type':ct,'Cache-Control':'public,max-age=86400'}); fs.createReadStream(fp).pipe(s); }],
   ['GET', /^\/upgrades$/, (q,s)=>{ var u=(_state&&_state.upgrades_na_loja)||[]; _res(s,200,{upgrades:u,total:u.length,compravel:u.filter(function(x){return x.canAfford;}).length}); }],
   ['GET', /^\/visual$/, (q,s)=>{ s.writeHead(301,{'Location':'/charts','Content-Length':'0'}); s.end(); }],
@@ -913,23 +937,23 @@ const ROUTES = [
   ['GET',    /^\/action\/view\/lvl\/([^\/]+)$/,         (q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} const mx=b.name==='Cursor'?20:10,lp=(st.sugar_lumps||{}).disponiveis||0; _res(s,200,{edificio:b.name,nivel_atual:b.level,nivel_maximo:mx,falta_para_maximo:mx-b.level,pode_subir_nivel:b.level<mx,sugar_lumps_disponiveis:lp,pode_usar_agora:lp>=1&&b.level<mx,effect:`+${b.level+1}% CpS at level ${b.level+1}`}); }],
   ['GET',    /^\/action\/view\/([^\/]+)$/,              (q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(b){_res(s,200,{tipo:'edificio',nome:b.name,quantidade_atual:b.amount,nivel:b.level,cps_base:b.baseCps,bloqueado:b.locked,precos_compra:{'1':b.buy_price_1,'10':b.buy_price_10,'100':b.buy_price_100},precos_venda:{'1':b.sell_price_1,'10':b.sell_price_10,'100':b.sell_price_100},pode_comprar:{'1':st.cookies_na_conta>=b.buy_price_1,'10':st.cookies_na_conta>=b.buy_price_10,'100':st.cookies_na_conta>=b.buy_price_100},pode_vender:{'1':b.amount>=1,'10':b.amount>=10,'100':b.amount>=100},tem_minigame:b.has_minigame});return;} const u=_findUpgrade(st,p[0]); if(u){_res(s,200,{tipo:'upgrade',id:u.id,nome:u.name,preco:u.price,pool:u.pool,descricao:u.description,pode_comprar:u.canAfford});return;} _res(s,404,{error:`'${p[0]}' not found.`}); }],
   ['GET',    /^\/action\/view\/upgrade\/([^\/]+)$/,    (q,s,p)=>{ const st=_getState(),u=_findUpgrade(st,decodeURIComponent(p[0])); if(!u){_res(s,404,{error:`Upgrade '${decodeURIComponent(p[0])}' not found in the store. Check GET /state → upgrades_na_loja.`});return;} _res(s,200,{tipo:'upgrade',id:u.id,nome:u.name,preco:u.price,pool:u.pool,descricao:u.description,pode_comprar:u.canAfford,falta_cookies:u.canAfford?0:Math.ceil(u.price-st.cookies_na_conta)}); }],
-  ['POST',   /^\/action\/buy\/upgrade\/([^\/]+)$/,     async(q,s,p)=>{ const st=_getState(),u=_findUpgrade(st,p[0]); if(!u){_res(s,404,{error:`Upgrade '${p[0]}' not found.`});return;} if(st.cookies_na_conta<u.price){_res(s,402,{error:'Not enough cookies.',necessario:u.price,disponivel:st.cookies_na_conta});return;} _queue.push({type:'buy_upgrade',id:u.id}); _res(s,200,{ok:true,message:`Upgrade '${u.name}' enfileirado.`,preco:u.price}); }],
-  ['POST',   /^\/action\/buy\/build\/([^\/]+)\/(\d+)$/, async(q,s,p)=>{ const qty=parseInt(p[1],10); if(![1,10,100].includes(qty)){_res(s,400,{error:'Quantidade: 1, 10 ou 100.'});return;} const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`,valid:BUILDINGS});return;} if(b.locked){_res(s,403,{error:`'${b.name}' bloqueado.`});return;} const pr=b[`buy_price_${qty}`]; if(st.cookies_na_conta<pr){_res(s,402,{error:'Cookies insuficientes.',necessario:pr,disponivel:st.cookies_na_conta});return;} _queue.push({type:'buy_building',name:b.name,quantidade:qty}); _res(s,200,{ok:true,message:`${qty}x '${b.name}' enfileirado.`,preco_total:pr}); }],
-  ['POST',   /^\/action\/sell\/build\/([^\/]+)\/(\d+)$/,async(q,s,p)=>{ const qty=parseInt(p[1],10); if(![1,10,100].includes(qty)){_res(s,400,{error:'Quantidade: 1, 10 ou 100.'});return;} const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} if(b.amount<qty){_res(s,422,{error:'Not enough stock.',possui:b.amount});return;} _queue.push({type:'sell_building',name:b.name,quantidade:qty}); _res(s,200,{ok:true,message:`${qty}x '${b.name}' enfileirado para venda.`}); }],
-  ['POST',   /^\/action\/enqueue$/,                     async(q,s)=>{ const b=await _readBody(q); if(!b.type){_res(s,400,{error:"Field 'type' is required."});return;} const ts=['click_cookie','buy_building','sell_building','buy_upgrade','click_shimmer','sugarlump_use','cast_spell','grimoire_recharge','pantheon_set','pantheon_remove','pantheon_recharge','garden_plant','garden_harvest','garden_harvest_all','garden_soil','stock_buy','stock_sell','dragon_set_aura','wrinkler_pop','wrinkler_pop_all','set_season','set_volume','mute_building','toggle_pref','buy_heavenly_upgrade','ascend','reincarnate','upgrade_dragon','upgrade_santa','harvest_lump','sell_all_of_type','force_save']; if(!ts.includes(b.type)){_res(s,400,{error:`Tipo '${b.type}' desconhecido.`,validos:ts});return;} _queue.push(b); _res(s,200,{ok:true,tipo:b.type,posicao_na_fila:_queue.length}); }],
-  ['GET',    /^\/action\/queue$/,                       (q,s)=>_res(s,200,{total:_queue.length,fila:[..._queue]})],
-  ['DELETE', /^\/action\/queue$/,                       (q,s)=>{ const n=_queue.length; _queue.length=0; _res(s,200,{ok:true,message:`Queue cleared. ${n} action(s) removed.`}); }],
+  ['POST', /^\/action\/buy\/upgrade\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'buy_upgrade',name:p[0]}))],
+  ['POST', /^\/action\/buy\/build\/([^\/]+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'buy_building',name:p[0],quantity:Number(p[1])}))],
+  ['POST', /^\/action\/sell\/build\/([^\/]+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'sell_building',name:p[0],quantity:Number(p[1])}))],
+  ['POST', /^\/action\/enqueue$/, async(q,s)=>_res(s,202,_enqueue(await _readBody(q)))],
+  ['GET', /^\/action\/queue$/, (q,s)=>_res(s,200,_controlQueue.view())],
+  ['DELETE', /^\/action\/queue$/, (q,s)=>_res(s,200,_controlQueue.clear())],
   ['GET',    /^\/sugarlump\/view$/,                     (q,s)=>{ const sl=_getState().sugar_lumps||{}; _res(s,200,{disponiveis:sl.disponiveis||0,tipo_crescendo:sl.tipo_crescendo||null,tempo_para_maduro_ms:sl.tempo_para_maduro_ms||null}); }],
-  ['POST',   /^\/sugarlump\/set\/([^\/]+)$/,            async(q,s,p)=>{ const st=_getState(),lp=(st.sugar_lumps||{}).disponiveis||0; if(lp<1){_res(s,422,{error:'Sem lumps.'});return;} const b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} const mx=b.name==='Cursor'?20:10; if(b.level>=mx){_res(s,422,{error:`'${b.name}' is already at max level.`});return;} _queue.push({type:'sugarlump_use',build_name:b.name}); _res(s,200,{ok:true,message:`Lump para '${b.name}' (${b.level}→${b.level+1}).`}); }],
-  ['POST',   /^\/sugarlump\/use\/([^\/]+)$/,            async(q,s,p)=>{ const st=_getState(),lp=(st.sugar_lumps||{}).disponiveis||0; if(lp<1){_res(s,422,{error:'Sem lumps.'});return;} const b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} const mx=b.name==='Cursor'?20:10; if(b.level>=mx){_res(s,422,{error:`'${b.name}' is already at max level.`});return;} _queue.push({type:'sugarlump_use',build_name:b.name}); _res(s,200,{ok:true,message:`Lump para '${b.name}' (${b.level}→${b.level+1}).`}); }],
+  ['POST', /^\/sugarlump\/set\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'sugarlump_use',name:p[0]}))],
+  ['POST', /^\/sugarlump\/use\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'sugarlump_use',name:p[0]}))],
   ['GET',    /^\/golden_cookie\/view$/,                 (q,s)=>{ const sh=_getState().shimmers||[]; _res(s,200,{tem_shimmer:sh.length>0,total:sh.length,shimmers:sh,acao_recomendada:sh.length>0?{type:'click_shimmer',index:0}:null}); }],
   ['GET',    /^\/effects\/view$/,                       (q,s)=>{ const bf=_getState().buffs_ativos||{}; _res(s,200,{tem_buffs:Object.keys(bf).length>0,buffs:bf}); }],
   ['GET',    /^\/prefs\/view$/,                 (q,s)=>{ const pr=_getState().interruptores||{},r={}; for(const k in PREF_MAP)r[k]={ativo:!!pr[k],descricao:PREF_MAP[k].d}; _res(s,200,r); }],
-  ['POST',   /^\/prefs\/set\/([^\/]+)$/,        async(q,s,p)=>{ const nm=p[0]; if(!PREF_MAP[nm]){_res(s,400,{error:`Preference '${nm}' is invalid.`,valid:Object.keys(PREF_MAP)});return;} const st=_getState(),at=!!(st.interruptores||{})[nm]; _queue.push({type:'toggle_pref',nome:nm}); _res(s,200,{ok:true,nome:nm,estado_atual:at,novo_estado:!at,descricao:PREF_MAP[nm].d}); }],
+  ['POST', /^\/prefs\/set\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'toggle_pref',name:p[0]}))],
   ['GET',    /^\/stats$/,                                 (q,s)=>{ const st=_getState(),es=st.estatisticas||{},bs=st.buildings||[],gr=st.grimorio||{},dr=st.dragao||{},sa=st.santa||{},sl=st.sugar_lumps||{},wk=st.wrinklers||[]; _res(s,200,{_sources:{ascensoes:'Game.resets (total ascensions ever performed)',prestige:'Game.prestige (heavenly chips earned in last run)',heavenly_chips:'Game.heavenlyChips (unspent)',heavenly_chips_gastos:'Game.heavenlyChipsSpent',total_cookies_ganhos:'Game.cookiesEarned (this run)',total_cookies_reset:'Game.cookiesReset (sum across all runs)',cookies_na_conta:'Game.cookies (current bank)',cps_raw:'Game.cookiesPsRaw (always-on, ignores focus)',cps_global:'Game.globalCookiesPs (goes to 0 when unfocused)',cpc:'Game.computedMouseCps (per click)'},bakery_name:st.bakery_name||'',cookies_na_conta:st.cookies_na_conta||0,cps_raw:st.cookies_por_segundo_raw||st.cookies_por_segundo||0,cps_global:st.cookies_por_segundo||0,cookies_por_click:st.cookies_por_click||0,prestige:es.prestige||0,ascensoes:es.ascensoes||0,heavenly_chips:es.heavenly_chips||0,heavenly_chips_gastos:es.heavenly_chips_gastos||0,total_cookies_ganhos:es.total_cookies_ganhos||0,total_cookies_reset:es.total_cookies_reset||0,total_cliques:es.total_cliques||0,fps:es.fps||0,estacao:es.estacao||'none',versao_jogo:es.versao_jogo||'',buildings:bs.map(function(b){return{name:b.name,amount:b.amount,level:b.level,locked:b.locked};}),total_buildings:bs.reduce(function(s,b){return s+b.amount;},0),upgrades_comprados:(st.upgrades_comprados||[]).length,upgrades_na_loja:(st.upgrades_na_loja||[]).length,nivel_dragao:dr.nivel||0,aura1_dragao:dr.aura1||0,aura2_dragao:dr.aura2||0,nivel_santa:sa.nivel||0,sugar_lumps_disponiveis:sl.disponiveis||0,sugar_lump_tipo:sl.tipo_crescendo||null,wrinklers_ativos:wk.filter(function(w){return w&&w.phase>0;}).length,wrinklers_total_sucked:wk.reduce(function(s,w){return s+(w&&w.sucked||0);},0),grimoire_mana:gr.magic||0,grimoire_mana_max:gr.magicMax||0,timestamp:st.timestamp||null}); }],
   ['GET',    /^\/backup$/,                              async(q,s)=>{ const st=_getState(); try{ const dir=path.join(__dirname,'cookie_bridge_backups'); if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true}); const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19),file=path.join(dir,ts+'.json'); fs.writeFileSync(file,JSON.stringify(st,null,2),'utf8'); _res(s,200,{ok:true,arquivo:file,bakery:st.bakery_name,timestamp:ts}); }catch(e){_res(s,500,{error:'Backup falhou: '+e.message});} }],
   ['GET',    /^\/history\/states$/,                     (q,s,p,u)=>{ const n=Math.min(parseInt(u.searchParams.get('n')||'10',10),60); _res(s,200,{total:_stateLog.length,estados:_stateLog.slice(-n)}); }],
-  ['GET',    /^\/history\/actions$/,                    (q,s,p,u)=>{ const n=Math.min(parseInt(u.searchParams.get('n')||'50',10),200); _res(s,200,{total:_actionLog.length,acoes:_actionLog.slice(-n)}); }],
+  ['GET', /^\/history\/actions$/, (q,s,p,u)=>{const n=Math.max(1,Math.min(Number(u.searchParams.get('n'))||50,200));const rows=_controlQueue.history(n);_res(s,200,{total:rows.length,acoes:rows});}],
   // ── Save DB ───────────────────────────────────────────────────────────────
   ['GET',    /^\/db\/info$/,           (q,s)=>{ try{ if(!fs.existsSync(_DB_FILE)){return _res(s,200,{file:_DB_FILE,count:0,size_bytes:0,size_mb:0,interval_min:_DB_MS/60000,first_ts:null,last_ts:null});} const sz=fs.statSync(_DB_FILE).size; const lines=fs.readFileSync(_DB_FILE,'utf8').split('\n').filter(Boolean); const first=lines.length?JSON.parse(lines[0]):null; const last=lines.length?JSON.parse(lines[lines.length-1]):null; _res(s,200,{file:_DB_FILE,count:lines.length,size_bytes:sz,size_mb:Math.round(sz/1024/1024*100)/100,interval_min:_DB_MS/60000,first_ts:first?first.ts:null,last_ts:last?last.ts:null,last_bakery:last?last.bakery:null}); }catch(e){_res(s,500,{error:e.message});} }],
   ['GET',    /^\/db\/history$/,        (q,s,p,u)=>{ try{ const n=Math.min(parseInt(u.searchParams.get('n')||'500',10),10000); if(!fs.existsSync(_DB_FILE))return _res(s,200,[]); const lines=fs.readFileSync(_DB_FILE,'utf8').split('\n').filter(Boolean); const slice=lines.slice(-n).map(l=>{const e=JSON.parse(l);delete e.save;return e;}); _res(s,200,slice); }catch(e){_res(s,500,{error:e.message});} }],
@@ -945,63 +969,63 @@ const ROUTES = [
   ['GET',    /^\/dbview$/,            (q,s)=>{ s.writeHead(301,{'Location':'/charts'}); s.end(); }],
   // ── Grimoire ──────────────────────────────────────────────────────────────
   ['GET',    /^\/grimoire\/view$/,                           (q,s)=>{ const g=_getState().grimorio; if(!g){_res(s,404,{error:'Grimoire not available. Buy the Wizard Tower.'});return;} _res(s,200,g); }],
-  ['POST',   /^\/grimoire\/cast\/(\d+)$/,                    async(q,s,p)=>{ const st=_getState(),g=st.grimorio; if(!g){_res(s,404,{error:'Grimoire not available.'});return;} const idx=parseInt(p[0],10),sp=(g.spells||[])[idx]; if(!sp){_res(s,404,{error:`Spell ${idx} not found. Total: ${(g.spells||[]).length}`});return;} if(!sp.canCast){_res(s,422,{error:'Mana insuficiente.',custo:sp.cost,mana_atual:g.magic,mana_max:g.magicMax});return;} _queue.push({type:'cast_spell',spell_index:idx}); _res(s,200,{ok:true,message:`Spell '${sp.name}' queued.`,custo:sp.cost,mana_apos:Math.round((g.magic-sp.cost)*10)/10}); }],
-  ['POST',   /^\/grimoire\/recharge$/,                       async(q,s)=>{ const st=_getState(),g=st.grimorio; if(!g){_res(s,404,{error:'Grimoire not available.'});return;} const lp=(st.sugar_lumps||{}).disponiveis||0; if(lp<1){_res(s,422,{error:'Sem sugar lumps.',disponivel:lp});return;} if(g.magic>=g.magicMax){_res(s,422,{error:'Mana is already full.',mana:g.magic,max:g.magicMax});return;} _queue.push({type:'grimoire_recharge'}); _res(s,200,{ok:true,message:'Recarga de mana enfileirada (1 sugar lump).',mana_antes:g.magic,mana_max:g.magicMax}); }],
+  ['POST', /^\/grimoire\/cast\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'cast_spell',spell_index:Number(p[0])}))],
+  ['POST', /^\/grimoire\/recharge$/, async(q,s,p)=>_res(s,202,_enqueue({type:'grimoire_recharge'}))],
   // ── Pantheon ──────────────────────────────────────────────────────────────
   ['GET',    /^\/pantheon\/view$/,                            (q,s)=>{ const p=_getState().panteao; if(!p){_res(s,404,{error:'Pantheon not available. Buy the Temple.'});return;} _res(s,200,p); }],
-  ['POST',   /^\/pantheon\/set\/(\d+)\/(\d+)$/,              async(q,s,p)=>{ const st=_getState(),pt=st.panteao; if(!pt){_res(s,404,{error:'Pantheon not available.'});return;} if((pt.swapsDisponiveis||0)<1){_res(s,422,{error:'Sem worship swaps. Use /panteao/recharge ou aguarde.'});return;} const sId=parseInt(p[0],10),slot=parseInt(p[1],10); if(slot<0||slot>2){_res(s,400,{error:'Slot: 0=Diamante(100%), 1=Rubi(50%), 2=Jade(25%).'});return;} _queue.push({type:'pantheon_set',spirit_index:sId,slot_index:slot}); _res(s,200,{ok:true,message:`Spirit ${sId} queued for slot ${['Diamante','Rubi','Jade'][slot]}.`}); }],
-  ['POST',   /^\/pantheon\/remove\/(\d+)$/,                  async(q,s,p)=>{ const st=_getState(),pt=st.panteao; if(!pt){_res(s,404,{error:'Pantheon not available.'});return;} const slot=parseInt(p[0],10); if(!(pt.slots||[])[slot]){_res(s,422,{error:`Slot ${slot} is already empty.`});return;} _queue.push({type:'pantheon_remove',slot_index:slot}); _res(s,200,{ok:true,message:`Spirit removed from slot ${slot}.`}); }],
-  ['POST',   /^\/pantheon\/recharge$/,                       async(q,s)=>{ const st=_getState(),pt=st.panteao; if(!pt){_res(s,404,{error:'Pantheon not available.'});return;} const lp=(st.sugar_lumps||{}).disponiveis||0; if(lp<1){_res(s,422,{error:'Sem sugar lumps.'});return;} if((pt.swapsDisponiveis||0)>=3){_res(s,422,{error:'Swaps already at max (3).'});return;} _queue.push({type:'pantheon_recharge'}); _res(s,200,{ok:true,message:'Recarga de worship swaps enfileirada (1 sugar lump).'}); }],
+  ['POST', /^\/pantheon\/set\/(\d+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'pantheon_set',spirit_index:Number(p[0]),slot_index:Number(p[1])}))],
+  ['POST', /^\/pantheon\/remove\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'pantheon_remove',slot_index:Number(p[0])}))],
+  ['POST', /^\/pantheon\/recharge$/, async(q,s,p)=>_res(s,202,_enqueue({type:'pantheon_recharge'}))],
   // ── Jardim ─────────────────────────────────────────────────────────────────
   ['GET',    /^\/garden\/view$/,                             (q,s)=>{ const j=_getState().jardim; if(!j){_res(s,404,{error:'Garden not available. Buy the Farm.'});return;} _res(s,200,Object.assign({},j,{solo_nome:SOIL_NAMES[j.soil||0]||'?'})); }],
   ['GET',    /^\/garden\/seeds$/,                            (q,s)=>{ const j=_getState().jardim; if(!j){_res(s,404,{error:'Garden not available.'});return;} _res(s,200,(j.seeds||[]).filter(function(s2){return s2.unlocked;}).map(function(s2){return{id:s2.id,name:s2.name};})); }],
-  ['POST',   /^\/garden\/plant\/(\d+)\/(\d+)\/(\d+)$/,   async(q,s,p)=>{ const st=_getState(),j=st.jardim; if(!j){_res(s,404,{error:'Garden not available.'});return;} const si=parseInt(p[0],10),x=parseInt(p[1],10),y=parseInt(p[2],10); const seed=(j.seeds||[]).find(s2=>s2.id===si); if(!seed){_res(s,404,{error:`Seed ${si} not found.`});return;} if(!seed.unlocked){_res(s,403,{error:`Seed '${seed.name}' is not yet unlocked.`});return;} const cell=(j.grid||[])[x]&&j.grid[x][y]; if(cell){_res(s,422,{error:`Cell (${x},${y}) is occupied by '${cell.seedName}'.`});return;} _queue.push({type:'garden_plant',seed_index:si,x,y}); _res(s,200,{ok:true,message:`'${seed.name}' enfileirada para (${x},${y}).`}); }],
-  ['POST',   /^\/garden\/harvest\/(\d+)\/(\d+)$/,            async(q,s,p)=>{ const st=_getState(),j=st.jardim; if(!j){_res(s,404,{error:'Garden not available.'});return;} const x=parseInt(p[0],10),y=parseInt(p[1],10); const cell=(j.grid||[])[x]&&j.grid[x][y]; if(!cell){_res(s,422,{error:`Cell (${x},${y}) is empty.`});return;} _queue.push({type:'garden_harvest',x,y}); _res(s,200,{ok:true,message:`Colheita de '${cell.seedName}' em (${x},${y}) enfileirada.`,madura:cell.mature}); }],
-  ['POST',   /^\/garden\/harvest_all$/,                     async(q,s)=>{ if(!_getState().jardim){_res(s,404,{error:'Garden not available.'});return;} _queue.push({type:'garden_harvest_all'}); _res(s,200,{ok:true,message:'Colheita total enfileirada.'}); }],
-  ['POST',   /^\/garden\/soil\/(\d+)$/,                     async(q,s,p)=>{ const t=parseInt(p[0],10); if(!_getState().jardim){_res(s,404,{error:'Garden not available.'});return;} if(t<0||t>4){_res(s,400,{error:'Tipo: 0-4.',tipos:SOIL_NAMES});return;} _queue.push({type:'garden_soil',tipo:t}); _res(s,200,{ok:true,tipo:t,solo_nome:SOIL_NAMES[t]}); }],
+  ['POST', /^\/garden\/plant\/(\d+)\/(\d+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'garden_plant',seed_index:Number(p[0]),x:Number(p[1]),y:Number(p[2])}))],
+  ['POST', /^\/garden\/harvest\/(\d+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'garden_harvest',x:Number(p[0]),y:Number(p[1])}))],
+  ['POST', /^\/garden\/harvest_all$/, async(q,s,p)=>_res(s,202,_enqueue({type:'garden_harvest_all'}))],
+  ['POST', /^\/garden\/soil\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'garden_soil',soil_id:Number(p[0])}))],
   // ── Bolsa de Valores ────────────────────────────────────────────────────────
   ['GET',    /^\/stock\/view$/,                              (q,s)=>{ const b=_getState().bolsa; if(!b){_res(s,404,{error:'Stock Market not available. Buy the Bank.'});return;} _res(s,200,b); }],
   ['GET',    /^\/stock\/analysis$/,                           (q,s)=>{ const b=_getState().bolsa; if(!b){_res(s,404,{error:'Stock Market not available.'});return;} const opp=Object.entries(b.goods||{}).filter(([,g])=>g.price<g.restingValue).map(([tk,g])=>({ticker:tk,preco:g.price,resting:g.restingValue,desconto_pct:Math.round((g.restingValue-g.price)/g.restingValue*1000)/10,portfolio:g.portfolio,espaco:g.maxPortfolio-g.portfolio})).sort((a,b2)=>b2.desconto_pct-a.desconto_pct); _res(s,200,{total:opp.length,ativos:opp}); }],
   ['GET',    /^\/stock\/view\/([^\/]+)$/,                   (q,s,p)=>{ const tk=p[0].toUpperCase(),b=_getState().bolsa; if(!b){_res(s,404,{error:'Stock Market not available.'});return;} if(!TICKERS.includes(tk)){_res(s,400,{error:`Ticker '${tk}' is invalid.`,validos:TICKERS});return;} const g=(b.goods||{})[tk]; if(!g){_res(s,404,{error:`Asset '${tk}' not found.`});return;} _res(s,200,Object.assign({ticker:tk},g,{below_resting:g.price<g.restingValue})); }],
-  ['POST',   /^\/stock\/buy\/([^\/]+)\/(\d+)$/,         async(q,s,p)=>{ const tk=p[0].toUpperCase(),qty=parseInt(p[1],10),st=_getState(),b=st.bolsa; if(!b){_res(s,404,{error:'Stock Market not available.'});return;} if(!TICKERS.includes(tk)){_res(s,400,{error:`Ticker '${tk}' is invalid.`});return;} const g=(b.goods||{})[tk]; if(!g){_res(s,404,{error:`Asset '${tk}' not found.`});return;} const space=g.maxPortfolio-g.portfolio; if(space<qty){_res(s,422,{error:'Portfolio cheio.',espaco_disponivel:space});return;} _queue.push({type:'stock_buy',ticker:tk,quantidade:qty}); _res(s,200,{ok:true,message:`Compra de ${qty}x ${tk} enfileirada.`,unit_price:g.price}); }],
-  ['POST',   /^\/stock\/sell\/([^\/]+)\/(\d+)$/,          async(q,s,p)=>{ const tk=p[0].toUpperCase(),qty=parseInt(p[1],10),st=_getState(),b=st.bolsa; if(!b){_res(s,404,{error:'Stock Market not available.'});return;} if(!TICKERS.includes(tk)){_res(s,400,{error:`Ticker '${tk}' is invalid.`});return;} const g=(b.goods||{})[tk]; if(!g){_res(s,404,{error:`Asset '${tk}' not found.`});return;} if(g.portfolio<qty){_res(s,422,{error:'Insufficient portfolio.',possui:g.portfolio});return;} _queue.push({type:'stock_sell',ticker:tk,quantidade:qty}); _res(s,200,{ok:true,message:`Venda de ${qty}x ${tk} enfileirada.`,unit_price:g.price}); }],
+  ['POST', /^\/stock\/buy\/([^\/]+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'stock_buy',ticker:p[0],quantity:Number(p[1])}))],
+  ['POST', /^\/stock\/sell\/([^\/]+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'stock_sell',ticker:p[0],quantity:Number(p[1])}))],
   // ── Dragon ─────────────────────────────────────────────────────────────────
   ['GET',    /^\/dragon\/view$/,                             (q,s)=>{ const d=_getState().dragao; if(!d){_res(s,404,{error:"Dragon not available. Buy 'How to bake your dragon'."});return;} _res(s,200,Object.assign({},d,{aura1_desc:DRAGON_AURAS[d.aura1]||'?',aura2_desc:DRAGON_AURAS[d.aura2]||'?',auras:DRAGON_AURAS})); }],
-  ['POST',   /^\/dragon\/set_aura\/(\d+)\/(\d+)$/,          async(q,s,p)=>{ const id=parseInt(p[0],10),slot=parseInt(p[1],10),d=_getState().dragao; if(!d){_res(s,404,{error:'Dragon not available.'});return;} if(id<0||id>21){_res(s,400,{error:'aura_id: 0-21.'});return;} if(slot===1&&d.nivel<20){_res(s,422,{error:`Secondary aura requires level 20. Current: ${d.nivel}`});return;} _queue.push({type:'dragon_set_aura',aura_id:id,slot}); _res(s,200,{ok:true,message:`Aura '${DRAGON_AURAS[id]}' enfileirada para slot ${slot}.`,aviso:'Setting an aura consumes 1 building of your most expensive type.'}); }],
+  ['POST', /^\/dragon\/set_aura\/(\d+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'dragon_set_aura',aura_id:Number(p[0]),slot:Number(p[1])}))],
   // ── Wrinklers ──────────────────────────────────────────────────────────────
   ['GET',    /^\/wrinklers\/view$/,                          (q,s)=>{ const ws=((_getState().wrinklers)||[]).filter(w=>w.phase>0),tot=ws.reduce((a,w)=>a+w.sucked,0); _res(s,200,{total_ativos:ws.length,maximo:12,total_cookies_acumulados:tot,total_ao_estourar:Math.round(tot*1.1),wrinklers:ws,tem_shiny:ws.some(w=>w.type===1)}); }],
-  ['POST',   /^\/wrinklers\/pop\/(\d+)$/,                   async(q,s,p)=>{ const id=parseInt(p[0],10),ws=(_getState().wrinklers)||[],w=ws.find(x=>x.id===id&&x.phase>0); if(!w){_res(s,404,{error:`Wrinkler ${id} is not active.`});return;} _queue.push({type:'wrinkler_pop',id}); _res(s,200,{ok:true,message:`Wrinkler ${id} will be popped.`,estimated_cookies_released:Math.round(w.sucked*1.1),shiny:w.type===1}); }],
-  ['POST',   /^\/wrinklers\/pop_all$/,                      async(q,s)=>{ const ws=((_getState().wrinklers)||[]).filter(w=>w.phase>0); if(!ws.length){_res(s,422,{error:'Sem wrinklers ativos.'});return;} const tot=ws.reduce((a,w)=>a+w.sucked,0); _queue.push({type:'wrinkler_pop_all'}); _res(s,200,{ok:true,message:`${ws.length} wrinkler(s) will be popped.`,estimated_total_cookies:Math.round(tot*1.1)}); }],
+  ['POST', /^\/wrinklers\/pop\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'wrinkler_pop',id:Number(p[0])}))],
+  ['POST', /^\/wrinklers\/pop_all$/, async(q,s,p)=>_res(s,202,_enqueue({type:'wrinkler_pop_all',include_shiny:true}))],
   // ── Season ────────────────────────────────────────────────────────────────
   ['GET',    /^\/season\/view$/,                             (q,s)=>{ const e=(_getState().estacao_ativa)||{}; _res(s,200,{estacao_atual:e.nome||'',tempo_restante_frames:e.tempo_restante_frames||0,usos_do_switcher:e.usos||0,estacoes_disponiveis:VALID_SEASONS}); }],
-  ['POST',   /^\/season\/set\/([^\/]*)$/,                   async(q,s,p)=>{ const nm=decodeURIComponent(p[0]||''); if(!VALID_SEASONS.includes(nm)){_res(s,400,{error:`Season '${nm}' is invalid.`,valid:VALID_SEASONS});return;} _queue.push({type:'set_season',nome:nm}); _res(s,200,{ok:true,message:`Troca para '${nm||'normal'}' enfileirada.`,aviso:"Requer upgrade 'Season Switcher'."}); }],
+  ['POST', /^\/season\/set\/([^\/]*)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'set_season',season:p[0]}))],
   // ── Volume ─────────────────────────────────────────────────────────────────
   ['GET',    /^\/volume\/view$/,                             (q,s)=>{ const v=(_getState().volume)||{sfx:75,music:50}; _res(s,200,{sfx:v.sfx,music:v.music,sfx_desc:'Sound effects (clicks, notifications)',music_desc:'Trilha sonora do jogo'}); }],
-  ['POST',   /^\/volume\/set\/([^\/]+)\/(\d+)$/,            async(q,s,p)=>{ const tipo=p[0],val=Math.min(100,Math.max(0,parseInt(p[1],10))); if(!['sfx','music'].includes(tipo)){_res(s,400,{error:"tipo: 'sfx' ou 'music'."});return;} _queue.push({type:'set_volume',tipo,valor:val}); _res(s,200,{ok:true,tipo,valor:val,message:`Volume de ${tipo} ajustado para ${val}%.`}); }],
-  ['POST',   /^\/volume\/mute\/([^\/]+)$/,                  async(q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} _queue.push({type:'mute_building',nome:b.name}); _res(s,200,{ok:true,edificio:b.name,muted_now:!!b.muted,new_state:!b.muted}); }],
+  ['POST', /^\/volume\/set\/([^\/]+)\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'set_volume',channel:p[0],value:Number(p[1])}))],
+  ['POST', /^\/volume\/mute\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'mute_building',name:p[0]}))],
   // ── Dragon — upgrade ──────────────────────────────────────────────────────
-  ['POST',   /^\/dragon\/upgrade$/,                      async(q,s)=>{ const d=(_getState().dragao)||{}; if(!d.pode_evoluir){_res(s,422,{error:'Dragon cannot evolve.',nivel:d.nivel,aviso:'Max level reached, or not enough cookies/buildings for current upgrade cost.'});return;} _queue.push({type:'upgrade_dragon'}); _res(s,200,{ok:true,message:'Dragon upgrade queued.',nivel_atual:d.nivel,aviso:'Costs cookies and/or sells buildings depending on level. Check GET /dragon/view.'}); }],
+  ['POST', /^\/dragon\/upgrade$/, async(q,s,p)=>_res(s,202,_enqueue({type:'upgrade_dragon'}))],
   // ── Papai Noel ────────────────────────────────────────────────────────────
   ['GET',    /^\/santa\/view$/,                          (q,s)=>{ const sc=_getState().santa; if(!sc){_res(s,404,{error:'Santa state not available.'});return;} _res(s,200,sc); }],
-  ['POST',   /^\/santa\/upgrade$/,                       async(q,s)=>{ const sc=(_getState().santa)||{}; if(!sc.pode_evoluir){_res(s,422,{error:`Santa is already at max level (${sc.nivel_maximo}).`,level:sc.nivel});return;} _queue.push({type:'upgrade_santa'}); _res(s,200,{ok:true,message:`Upgrade queued: '${sc.nome}' → level ${(sc.nivel||0)+1}.`,aviso:"Requires season 'christmas' active and enough cookies to afford."}); }],
+  ['POST', /^\/santa\/upgrade$/, async(q,s,p)=>_res(s,202,_enqueue({type:'upgrade_santa'}))],
   // ── Sugar Lump — colheita manual ──────────────────────────────────────────
-  ['POST',   /^\/sugarlump\/harvest$/,                   async(q,s)=>{ _queue.push({type:'harvest_lump'}); _res(s,200,{ok:true,message:'Colheita manual de sugar lump enfileirada.',aviso:'Manual harvest lets you control the next lump type (Bifurcated, Golden, Caramelized, etc.).'}); }],
+  ['POST', /^\/sugarlump\/harvest$/, async(q,s,p)=>_res(s,202,_enqueue({type:'harvest_lump'}))],
   // ── Venda total de um tipo ────────────────────────────────────────────────
-  ['POST',   /^\/action\/sell_all\/([^\/]+)$/,           async(q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} if(b.amount<1){_res(s,422,{error:`No '${b.name}' para vender.`,possui:0});return;} _queue.push({type:'sell_all_of_type',name:b.name}); _res(s,200,{ok:true,message:`Venda de ${b.amount}x '${b.name}' enfileirada.`,quantidade:b.amount,aviso:'Use with Godzamok in the Pantheon (Diamond slot) for a massive CpC buff before rebuying.'}); }],
+  ['POST', /^\/action\/sell_all\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'sell_all_of_type',name:p[0]}))],
   // ── Forced Save ──────────────────────────────────────────────────────────
-  ['POST',   /^\/game\/save$/,                           async(q,s)=>{ _queue.push({type:'force_save'}); _res(s,200,{ok:true,message:'Forced save queued.',aviso:'Run before risky actions: ascending, casting high-fail spells, or mass selling.'}); }],
+  ['POST', /^\/game\/save$/, async(q,s,p)=>_res(s,202,_enqueue({type:'force_save'}))],
   // ── Prestige ───────────────────────────────────────────────────────────────
   ['GET',    /^\/prestige\/view$/,                           (q,s)=>{ const es=(_getState().estatisticas)||{}; _res(s,200,{prestige:es.prestige||0,heavenly_chips:es.heavenly_chips||0,heavenly_chips_gastos:es.heavenly_chips_gastos||0,ascensoes:es.ascensoes||0,bonus_cps_pct:es.prestige||0,aviso:'Para ascender use POST /action/enqueue com type=ascend (REINICIA o run atual).'}); }],
   // ── Reincarnation ────────────────────────────────────────────────────────────
-  ['POST',   /^\/legacy\/reincarnate$/,                  async(q,s)=>{ _queue.push({type:'reincarnate'}); _res(s,200,{ok:true,message:'Reincarnation queued. Game will return to run start after the ascension screen.',aviso:'Only works while the game is on the ascension screen (after POST /legacy/ascend).'}); }],
+  ['POST', /^\/legacy\/reincarnate$/, async(q,s,p)=>_res(s,202,_enqueue({type:'reincarnate'}))],
   // ── Legacy (Prestige / Ascension) ─────────────────────────────────────────
   ['GET',    /^\/legacy\/view$/,                             (q,s)=>{ const lg=_getState().legado; if(!lg){_res(s,404,{error:'Legacy data not available.'});return;} _res(s,200,{prestige:lg.prestige,heavenly_chips:lg.heavenly_chips,heavenly_chips_gastos:lg.heavenly_chips_gastos,ascensoes:lg.ascensoes,modo_ascensao:lg.modo_ascensao,cookies_para_proximo_prestige:lg.cookies_para_proximo_prestige,total_upgrades_prestige:(lg.upgrades||[]).length,upgrades_comprados:(lg.upgrades||[]).filter(u=>u.bought).length,aviso_ascensao:'POST /legacy/ascend with {"confirmar":true} RESETS the current run. Buildings and upgrades are lost. Heavenly chips and prestige upgrades are kept.'}); }],
   ['GET',    /^\/legacy\/upgrades$/,                        (q,s)=>{ const lg=_getState().legado; if(!lg){_res(s,404,{error:'Legacy data not available.'});return;} const upgs=(lg.upgrades||[]).sort((a,b2)=>a.price-b2.price); _res(s,200,{heavenly_chips:lg.heavenly_chips||0,total:upgs.length,comprados:upgs.filter(u=>u.bought).length,upgrades:upgs}); }],
-  ['POST',   /^\/legacy\/buy_heavenly\/(\d+)$/,             async(q,s,p)=>{ const lg=_getState().legado; if(!lg){_res(s,404,{error:'Legacy data not available.'});return;} const id=parseInt(p[0],10); const upg=(lg.upgrades||[]).find(u=>u.id===id); if(!upg){_res(s,404,{error:`Prestige upgrade ${id} not found. Use GET /legacy/upgrades.`});return;} if(upg.bought){_res(s,422,{error:`Upgrade '${upg.name}' already bought.`});return;} if(!upg.canAfford){_res(s,402,{error:`Not enough heavenly chips. Required: ${upg.price} | Available: ${lg.heavenly_chips}`});return;} _queue.push({type:'buy_heavenly_upgrade',id}); _res(s,200,{ok:true,message:`Upgrade '${upg.name}' enfileirado.`,preco:upg.price,chips_apos:lg.heavenly_chips-upg.price}); }],
-  ['POST',   /^\/legacy\/ascend$/,                          async(q,s)=>{ const body=await _readBody(q); if(body.confirmar!==true){_res(s,400,{error:'DANGER: This action resets the current run.',instrucao:'Envie {"confirmar":true} para prosseguir.',aviso:'All buildings, upgrades, and run progress will be erased. Heavenly chips and prestige upgrades are kept.'});return;} _queue.push({type:'ascend',confirmar:true}); _res(s,200,{ok:true,message:'Ascension queued. The game will reset in ~500 ms.',aviso:'Heavenly chips and prestige upgrades are kept. Everything else is reset.'}); }],
+  ['POST', /^\/legacy\/buy_heavenly\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'buy_heavenly_upgrade',id:Number(p[0])}))],
+  ['POST', /^\/legacy\/ascend$/, async(q,s)=>{const body=await _readBody(q);_res(s,202,_enqueue({type:'ascend',confirm:body.confirm===undefined?body.confirmar:body.confirm}));}],
   // Endpoints internos usados pelo mod (fetch dentro do jogo)
   ['POST',   /^\/state$/,                               async(q,s)=>{ const b=await _readBody(q); if(b&&typeof b==='object'&&b.timestamp){_state=b;_stateLog.push(b);if(_stateLog.length>60)_stateLog.shift();} _res(s,200,{ok:true}); }],
-  ['GET',    /^\/action\/next$/,                        (q,s)=>{ let a=null; if(_queue.length>0){const si=_queue.findIndex(x=>x.type==='click_shimmer');a=si>=0?_queue.splice(si,1)[0]:_queue.shift();if(a){_actionLog.push(Object.assign({},a,{_executed_at:Date.now()}));if(_actionLog.length>200)_actionLog.shift();}} if(a){_res(s,200,a);}else{s.writeHead(204,{'Access-Control-Allow-Origin':'*','Content-Length':'0'});s.end();} }],
+  ['GET', /^\/action\/next$/, (q,s)=>{const action=_controlQueue.next();if(action)_res(s,200,action);else{s.writeHead(204,{'Access-Control-Allow-Origin':'*','Content-Length':'0'});s.end();}}],
 ];
 
 // ── Portuguese translations ───────────────────────────────────────────────────
@@ -2610,16 +2634,8 @@ function launch(){
 					_stateLog.push(_state);
 					if (_stateLog.length > 60) _stateLog.shift();
 				}
-				// Returns next action from queue (shimmer has priority)
-				let nextAction = null;
-				if (_queue.length > 0) {
-					const si = _queue.findIndex(a => a.type === 'click_shimmer');
-					nextAction = si >= 0 ? _queue.splice(si, 1)[0] : _queue.shift();
-					if (nextAction) {
-						_actionLog.push(Object.assign({}, nextAction, {_executed_at: Date.now()}));
-						if (_actionLog.length > 200) _actionLog.shift();
-					}
-				}
+				if (args && args.results) _controlQueue.acknowledge(args.results);
+				const nextAction = _controlQueue.next();
 				send('ai_action', nextAction, callback);
 			}
 		}catch(e){

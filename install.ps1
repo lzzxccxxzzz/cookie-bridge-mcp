@@ -1,3 +1,8 @@
+param(
+    [string]$GameAppPath,
+    [switch]$NoPause
+)
+
 # Cookie Bridge — Install Script
 # Run as Administrator (required to write to Program Files)
 # Usage: Right-click install.ps1 → Run with PowerShell
@@ -6,7 +11,9 @@ $ErrorActionPreference = 'Stop'
 
 # ── Detect Cookie Clicker path ────────────────────────────────────────────────
 $CC_DEFAULT = "C:\Program Files (x86)\Steam\steamapps\common\Cookie Clicker\resources\app"
-if (Test-Path $CC_DEFAULT) {
+if ($GameAppPath) {
+    $CC_APP = (Resolve-Path -LiteralPath $GameAppPath).Path
+} elseif (Test-Path $CC_DEFAULT) {
     $CC_APP = $CC_DEFAULT
 } else {
     Write-Host ""
@@ -19,6 +26,9 @@ $CC_MODS = Join-Path (Split-Path $CC_APP) "resources\app\mods\local"
 $CC_MODS = Join-Path $CC_APP "mods\local"
 
 $ROOT = $PSScriptRoot
+if (-not (Test-Path -LiteralPath (Join-Path $CC_APP 'src\main.js'))) {
+    throw 'Expected a Cookie Clicker resources\app folder containing src\main.js.'
+}
 
 Write-Host ""
 Write-Host "Cookie Bridge Installer" -ForegroundColor Cyan
@@ -43,12 +53,13 @@ $MOD_DEST = Join-Path $CC_MODS "mod_api"
 if (-not (Test-Path $MOD_DEST)) {
     New-Item -ItemType Directory -Path $MOD_DEST -Force | Out-Null
 }
-Copy-Item (Join-Path $ROOT "mod_api\main.js")  (Join-Path $MOD_DEST "main.js")  -Force
-Copy-Item (Join-Path $ROOT "mod_api\info.txt") (Join-Path $MOD_DEST "info.txt") -Force
+foreach ($ControlFile in @('main.js', 'control-schema.js', 'control-runtime.js', 'control-queue.js', 'info.txt')) {
+    Copy-Item -LiteralPath (Join-Path (Join-Path $ROOT 'mod_api') $ControlFile) -Destination (Join-Path $MOD_DEST $ControlFile) -Force
+}
 Write-Host "[OK] mod_api installed to $MOD_DEST" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Installation complete!" -ForegroundColor Cyan
 Write-Host "Start Cookie Clicker and open http://localhost:8000/docs" -ForegroundColor White
 Write-Host ""
-Pause
+if (-not $NoPause) { Pause }

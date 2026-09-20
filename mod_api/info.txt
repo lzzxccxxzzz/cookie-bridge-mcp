@@ -2,10 +2,10 @@
   "Name": "Cookie Bridge",
   "ID": "cookie_ai_bridge",
   "Author": "naibu",
-  "Description": "Exposes complete game state and all actions as HTTP endpoints for AI autoplay. 71 REST endpoints covering buildings, upgrades, minigames (Grimoire, Pantheon, Garden, Stock Market), dragon auras, wrinklers, seasons, prestige/legacy, and more.",
-  "ModVersion": 2.1,
+  "Description": "Cookie Bridge v3: typed vanilla game controls, catalogs, minigames, dragon, seasons, prestige, gifts, saves and UI adapters over HTTP and MCP, with renderer execution receipts. See the coverage matrix for version-specific limits.",
+  "ModVersion": 3.0,
   "GameVersion": "2.052",
-  "Date": "25/05/2026",
+  "Date": "20/09/2026",
   "Dependencies": [],
   "Disabled": 0,
   "AllowSteamAchievs": 0
