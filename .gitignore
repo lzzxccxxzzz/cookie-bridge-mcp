@@ -4,3 +4,6 @@ Thumbs.db
 todo.md
 DOCUMENTACAO.md
 mod_api/start.js
+**/access-token
+**/.env
+**/.env.*

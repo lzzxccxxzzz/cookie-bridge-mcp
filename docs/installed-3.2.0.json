@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "time": "2026-09-21T03:46:12.456Z",
+  "game_version": 2.053,
+  "bridge_version": "3.2.0",
+  "renderer_version": "3.2.0",
+  "tools": 101,
+  "buildings": 20,
+  "read_only": true,
+  "gameplay_actions": 0,
+  "test_mode": false
+}

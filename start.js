@@ -30,6 +30,8 @@ let _stateLog = [];
 const CONTROL_DIR = fs.existsSync(path.join(__dirname, 'mod_api', 'control-schema.js'))
   ? path.join(__dirname, 'mod_api') : path.join(__dirname, 'mods', 'local', 'mod_api');
 const CONTROL_SCHEMA = require(path.join(CONTROL_DIR, 'control-schema.js'));
+const SECURITY = require(path.join(CONTROL_DIR, 'control-security.js'));
+const _security = SECURITY.createSecurity({port: API_PORT, directory: BRIDGE_DATA});
 const _controlQueue = require(path.join(CONTROL_DIR, 'control-queue.js')).createQueue({storagePath: path.join(BRIDGE_DATA, 'actions.json')});
 function _enqueue(action) {
   if (!_state || !_state.control || _state.control.api_version !== CONTROL_SCHEMA.version) {
@@ -68,28 +70,27 @@ function _res(res, status, data) {
   const body = JSON.stringify(data, null, 2);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Length': Buffer.byteLength(body),
   });
   res.end(body);
 }
 function _resHtml(res, html) {
-  res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Access-Control-Allow-Origin':'*'});
+  res.writeHead(200, {'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});
+  // Existing dashboard controls use same-origin fetch and an HttpOnly session.
+  html=html.replace('<head>', '<head><script>var esc='+SECURITY.escapeHTML.toString()+';var _cbFetch=window.fetch.bind(window);window.fetch=function(url,options){options=Object.assign({},options);if(new URL(url,location.href).origin===location.origin&&/^(POST|DELETE)$/i.test(options.method||"GET")){options.headers=new Headers(options.headers);if(!options.headers.has("Content-Type"))options.headers.set("Content-Type","application/json");}return _cbFetch(url,options);};</script>');
   res.end(html);
 }
-function _readBody(req) {
+function _readBody(req, limit = 8 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let b = '', bytes = 0, exceeded = false;
     req.setEncoding('utf8');
     req.on('data', c => {
       bytes += Buffer.byteLength(c, 'utf8');
-      if (bytes > 8 * 1024 * 1024) { exceeded = true; b = ''; return; }
+      if (bytes > limit) { exceeded = true; b = ''; return; }
       if (!exceeded) b += c;
     });
     req.on('end', () => {
-      if (exceeded) return reject({status: 413, message: 'Request body exceeds 8 MiB.'});
+      if (exceeded) return reject({status: 413, message: 'Request body exceeds the allowed size.'});
       try { resolve(b ? JSON.parse(b) : {}); } catch (_) { reject({status: 400, message: 'Malformed JSON.'}); }
     });
     req.on('error', reject);
@@ -110,323 +111,6 @@ function _findUpgrade(state, nome) {
 
 
 
-// ── (DB View removed — redirects to /charts) ─────────────────────────────────
-const _DBVIEW_GONE = `removed`; void `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cookie Bridge — DB View</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#040410;--bg2:#07071a;--bg3:#0a0a20;--bg4:#0d0d26;
-  --border:#181838;--border2:#222248;
-  --c1:#00e5ff;--c2:#69ff47;--c3:#ffea00;--c4:#d500f9;--c5:#ff4081;--c6:#ff6d00;
-  --dim:#28385a;--dim2:#3a5070;--text:#b0bcd0;--text2:#d0daea;
-}
-html,body{height:100%;overflow:hidden}
-body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column}
-
-/* ── GRID BACKGROUND ── */
-body::before{content:'';position:fixed;inset:0;pointer-events:none;
-  background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);
-  background-size:40px 40px;opacity:.4;z-index:0}
-
-/* ── HEADER ── */
-header{position:relative;z-index:10;background:rgba(7,7,26,.92);backdrop-filter:blur(8px);
-  border-bottom:1px solid var(--border2);padding:0 20px;height:52px;display:flex;align-items:center;gap:12px;flex-shrink:0}
-header::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:2px;
-  background:linear-gradient(90deg,transparent 0%,var(--c1) 20%,var(--c4) 50%,var(--c2) 80%,transparent 100%);opacity:.6}
-.logo{display:flex;align-items:center;gap:8px;text-decoration:none}
-.logo-icon{width:28px;height:28px;background:radial-gradient(circle at 40% 35%,var(--c1),var(--c4));border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:0 0 12px rgba(0,229,255,.3)}
-.logo-text{color:var(--c1);font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:3px;font-weight:500}
-.sep{width:1px;height:24px;background:var(--border2)}
-.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;border:1px solid;white-space:nowrap}
-.pill-b{border-color:var(--c1);color:var(--c1);background:rgba(0,229,255,.07)}
-.pill-g{border-color:var(--c2);color:var(--c2);background:rgba(105,255,71,.07)}
-.pill-y{border-color:var(--c3);color:var(--c3);background:rgba(255,234,0,.07)}
-.pill-p{border-color:var(--c4);color:var(--c4);background:rgba(213,0,249,.07)}
-.pill-r{border-color:var(--c5);color:var(--c5);background:rgba(255,64,129,.07)}
-.pulse{width:6px;height:6px;border-radius:50%;background:var(--c2);animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(105,255,71,.4)}50%{opacity:.7;box-shadow:0 0 0 4px rgba(105,255,71,0)}}
-.spacer{flex:1}
-#upd-time{color:var(--dim2);font-family:'JetBrains Mono',monospace;font-size:10px}
-.hdr-btn{background:var(--bg3);border:1px solid var(--border2);color:var(--dim2);padding:4px 12px;border-radius:4px;font-size:10px;cursor:pointer;text-decoration:none;letter-spacing:.5px;transition:all .15s}
-.hdr-btn:hover{border-color:var(--c1);color:var(--c1)}
-
-/* ── LAYOUT ── */
-#layout{display:flex;flex:1;overflow:hidden;position:relative;z-index:1}
-
-/* ── SIDEBAR ── */
-aside{width:224px;background:rgba(7,7,26,.95);border-right:1px solid var(--border2);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden}
-.side-scroll{overflow-y:auto;flex:1;padding:14px 12px}
-.sec{margin-bottom:18px}
-.sec-head{display:flex;align-items:center;gap:6px;color:var(--dim2);font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:3px;text-transform:uppercase;margin-bottom:9px;padding-bottom:5px;border-bottom:1px solid var(--border)}
-.sec-head svg{opacity:.6}
-.tog{display:flex;align-items:center;gap:7px;padding:4px 6px;cursor:pointer;font-size:11px;color:#6878a0;user-select:none;border-radius:4px;transition:all .12s}
-.tog:hover{color:var(--text);background:rgba(255,255,255,.03)}
-.tog input{accent-color:var(--c1);width:12px;height:12px;flex-shrink:0;cursor:pointer}
-.swatch{width:8px;height:8px;border-radius:2px;flex-shrink:0}
-.tog-sub{color:var(--dim);font-size:9px;margin-left:auto}
-.grp-btns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:4px}
-.gbtn{background:var(--bg4);border:1px solid var(--border);color:var(--dim2);padding:5px 4px;border-radius:4px;font-size:9px;cursor:pointer;letter-spacing:.5px;transition:all .12s;text-align:center}
-.gbtn:hover{border-color:var(--c1);color:var(--c1)}
-.radio-row{display:flex;gap:4px;margin-top:6px}
-.rbtn{flex:1;background:var(--bg4);border:1px solid var(--border);color:var(--dim2);padding:5px;border-radius:4px;font-size:10px;cursor:pointer;text-align:center;transition:all .12s}
-.rbtn.on{border-color:var(--c1);color:var(--c1);background:rgba(0,229,255,.06)}
-.hint{color:var(--dim);font-size:9px;margin-top:6px;line-height:1.6}
-.db-row{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid rgba(24,24,56,.6)}
-.db-row .k{color:var(--dim2);font-size:9px}
-.db-row .v{color:var(--text);font-family:'JetBrains Mono',monospace;font-size:10px}
-
-/* ── MAIN AREA ── */
-main{flex:1;overflow:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(400px,1fr));gap:14px;align-content:start}
-.ccard{background:rgba(7,7,26,.96);border:1px solid var(--border2);border-radius:10px;padding:14px 16px;position:relative;overflow:hidden;transition:border-color .2s,box-shadow .2s}
-.ccard::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:10px 10px 0 0;opacity:.7}
-.ccard:hover{border-color:#2a2a5a;box-shadow:0 4px 24px rgba(0,0,0,.4)}
-.ct-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
-.ct-left .ct-label{font-family:'JetBrains Mono',monospace;font-size:8px;letter-spacing:2.5px;text-transform:uppercase;color:var(--dim2);margin-bottom:3px}
-.ct-left .ct-unit{font-size:10px;color:var(--dim);font-style:italic}
-.ct-val{text-align:right}
-.ct-val .cur{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;line-height:1}
-.ct-val .curdelta{font-size:9px;color:var(--dim2);margin-top:3px;font-family:'JetBrains Mono',monospace}
-canvas{display:block;max-height:180px}
-#empty{grid-column:1/-1;text-align:center;padding:80px 20px}
-#empty .e-icon{font-size:40px;margin-bottom:12px;opacity:.3}
-#empty .e-msg{color:var(--dim2);font-size:13px;letter-spacing:1px}
-#empty .e-sub{color:var(--dim);font-size:11px;margin-top:8px}
-::-webkit-scrollbar{width:4px;height:4px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
-::-webkit-scrollbar-thumb:hover{background:#2a2a5a}
-</style>
-</head>
-<body>
-<header>
-  <a class="logo" href="/docs">
-    <div class="logo-icon">🍪</div>
-    <span class="logo-text">DB&nbsp;VIEW</span>
-  </a>
-  <div class="sep"></div>
-  <span class="pill pill-b"><span class="pulse"></span><span id="h-count">—</span></span>
-  <span class="pill pill-y" id="h-size">—</span>
-  <span class="pill pill-g" id="h-mem">—</span>
-  <span class="pill pill-p" id="h-runs">—</span>
-  <div class="spacer"></div>
-  <span id="upd-time"></span>
-  <a class="hdr-btn" href="/docs">← Docs</a>
-  <button class="hdr-btn" onclick="load()">↻ Refresh</button>
-</header>
-<div id="layout">
-<aside>
-<div class="side-scroll">
-  <div class="sec">
-    <div class="sec-head"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>METRICS</div>
-    <div id="m-list"></div>
-  </div>
-  <div class="sec">
-    <div class="sec-head"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>REBIRTHS</div>
-    <div class="grp-btns">
-      <div class="gbtn" onclick="setRuns('all')">All</div>
-      <div class="gbtn" onclick="setRuns('last')">Latest</div>
-      <div class="gbtn" onclick="setRuns('none')">Clear</div>
-    </div>
-    <div style="display:flex;align-items:center;gap:4px;margin-top:8px">
-      <input id="r-from" type="number" min="0" placeholder="from" title="From run #" style="width:54px;background:var(--bg4);border:1px solid var(--border);color:var(--text2);padding:4px 6px;border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;outline:none">
-      <span style="color:var(--dim);font-size:10px">–</span>
-      <input id="r-to" type="number" min="0" placeholder="to" title="To run #" style="width:54px;background:var(--bg4);border:1px solid var(--border);color:var(--text2);padding:4px 6px;border-radius:4px;font-size:10px;font-family:'JetBrains Mono',monospace;outline:none">
-      <div class="gbtn" style="flex:1;text-align:center" onclick="applyRange()">Go</div>
-    </div>
-    <div class="hint">Range of run numbers to compare.</div>
-    <div id="r-list" style="margin-top:10px;max-height:220px;overflow-y:auto"></div>
-  </div>
-  <div class="sec">
-    <div class="sec-head"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>TIME AXIS</div>
-    <div class="radio-row">
-      <div class="rbtn on" id="b-rel" onclick="setMode('rel')">Relative</div>
-      <div class="rbtn" id="b-abs" onclick="setMode('abs')">Absolute</div>
-    </div>
-    <div class="hint">Relative: minutes since run start.<br>Aligns all rebirths at t=0 for direct comparison.</div>
-  </div>
-  <div class="sec">
-    <div class="sec-head"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z"/></svg>DATABASE</div>
-    <div id="db-info"></div>
-  </div>
-</div>
-</aside>
-<main id="area">
-  <div id="empty"><div class="e-icon">📊</div><div class="e-msg">Loading data…</div><div class="e-sub">Fetching from ~/CookieBridge/saves.ndjson</div></div>
-</main>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-const MET=[
-  {k:'cps',             l:'CpS',           u:'Cookies per second',  c:'#00e5ff', cc:'ccard-c1'},
-  {k:'cpc',             l:'CpC',           u:'Cookies per click',   c:'#69ff47', cc:'ccard-c2'},
-  {k:'total_buildings', l:'Buildings',     u:'Total owned',         c:'#ffea00', cc:'ccard-c3'},
-  {k:'upgrades_bought', l:'Upgrades',      u:'Total purchased',     c:'#ff6d00', cc:'ccard-c6'},
-  {k:'prestige',        l:'Prestige',      u:'Level',               c:'#d500f9', cc:'ccard-c4'},
-  {k:'legacy_gain',     l:'Legacy Gain',   u:'Prestige gain if ascend now', c:'#ff4081', cc:'ccard-c5'},
-  {k:'cookies',         l:'Bank',          u:'Cookies in bank',     c:'#b8a030', cc:'ccard-cy'},
-  {k:'grimoire_mana',   l:'Mana',          u:'Grimoire mana',       c:'#8866ff', cc:'ccard-cv'},
-];
-const RC=['#00e5ff','#69ff47','#ffea00','#ff6d00','#d500f9','#ff4081','#00bfa5','#aa00ff','#c6ff00','#ff8f00','#64ffda','#b388ff','#ff80ab','#ccff90','#80d8ff','#ea80fc'];
-let D=[],CH={},mode='rel',selM=new Set(['cps','cpc','total_buildings','upgrades_bought']),selR=new Set(),allR=[];
-
-var _NS=['million','billion','trillion','quadrillion','quintillion','sextillion','septillion','octillion','nonillion','decillion','undecillion','duodecillion','tredecillion','quattuordecillion','quindecillion','sexdecillion','septendecillion','octodecillion','novemdecillion','vigintillion'];
-function fN(n){if(n===null||n===undefined)return'?';n=+n;if(isNaN(n))return'?';var neg=n<0;if(neg)n=-n;var s;if(n>=1e6){var e=Math.min(Math.floor(Math.log10(n)/3)*3,63);var idx=e/3-2;s=(idx>=0&&idx<_NS.length)?(n/Math.pow(10,e)).toFixed(3)+' '+_NS[idx]:n.toExponential(3);}else if(n>=1000){s=Math.round(n).toLocaleString('en-US');}else{s=n<1?n.toFixed(3):String(Math.round(n));}return neg?'-'+s:s;}
-function grp(d){const g={};d.forEach(r=>{const k=r.run??'?';(g[k]=g[k]||[]).push(r);});return g;}
-function setMode(m){mode=m;['rel','abs'].forEach(x=>{document.getElementById('b-'+x).className='rbtn'+(m===x?' on':'');});render();}
-function setRuns(t){const g=grp(D);if(t==='all')allR.forEach(r=>selR.add(r));else if(t==='last'){selR.clear();if(allR.length)selR.add(allR[allR.length-1]);}else selR.clear();buildRT(g);render();}
-function applyRange(){const from=parseInt(document.getElementById('r-from').value);const to=parseInt(document.getElementById('r-to').value);const hasFrom=!isNaN(from);const hasTo=!isNaN(to);selR.clear();allR.forEach(r=>{const n=+r;if((!hasFrom||n>=from)&&(!hasTo||n<=to))selR.add(r);});buildRT(grp(D));render();}
-
-function buildML(){
-  document.getElementById('m-list').innerHTML=MET.map(m=>\`
-    <label class="tog">
-      <input type="checkbox" \${selM.has(m.k)?'checked':''} onchange="toggleM('\${m.k}',this.checked)">
-      <span class="swatch" style="background:\${m.c}"></span>
-      <span>\${m.l}</span>
-      <span class="tog-sub">\${m.u}</span>
-    </label>\`).join('');
-}
-
-function buildRT(g){
-  allR=Object.keys(g).sort((a,b)=>+a-+b);
-  if(!selR.size)allR.forEach(r=>selR.add(r));
-  document.getElementById('r-list').innerHTML=allR.map((r,i)=>{
-    const pts=g[r].length;
-    const last=g[r][pts-1];
-    const dur=pts>1?Math.round((+new Date(g[r][pts-1].ts)-+new Date(g[r][0].ts))/60000):0;
-    return \`<label class="tog">
-      <input type="checkbox" \${selR.has(r)?'checked':''} onchange="toggleR('\${r}',this.checked)">
-      <span class="swatch" style="background:\${RC[i%RC.length]}"></span>
-      <span>Run <b style="color:#c0cce0">#\${r}</b></span>
-      <span class="tog-sub">\${pts}pts \${dur?dur+'m':''}</span>
-    </label>\`;
-  }).join('');
-}
-
-function toggleM(k,on){if(on)selM.add(k);else selM.delete(k);render();}
-function toggleR(r,on){if(on)selR.add(r);else selR.delete(r);render();}
-
-function render(){
-  const area=document.getElementById('area');
-  const g=grp(D);
-  document.getElementById('empty').style.display='none';
-
-  MET.forEach(m=>{
-    const show=selM.has(m.k);
-    let card=document.getElementById('cc-'+m.k);
-    if(!show){if(card)card.style.display='none';return;}
-    if(!card){
-      card=document.createElement('div');
-      card.id='cc-'+m.k;card.className='ccard';
-      card.style.cssText=\`--accent:\${m.c}\`;
-      card.innerHTML=\`
-        <div style="position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,\${m.c}00,\${m.c},\${m.c}00);border-radius:10px 10px 0 0"></div>
-        <div class="ct-bar">
-          <div class="ct-left">
-            <div class="ct-label">\${m.l}</div>
-            <div class="ct-unit">\${m.u}</div>
-          </div>
-          <div class="ct-val">
-            <div class="cur" style="color:\${m.c}" id="cv-\${m.k}">—</div>
-            <div class="curdelta" id="cd-\${m.k}"></div>
-          </div>
-        </div>
-        <canvas id="ca-\${m.k}"></canvas>\`;
-      area.appendChild(card);
-    }
-    card.style.display='';
-
-    const sets=allR.filter(r=>selR.has(r)).map((r,i)=>{
-      const rd=g[r]||[];
-      const base=rd.length?+new Date(rd[0].ts):0;
-      return{
-        label:'#'+r,
-        data:rd.map(d=>({x:mode==='rel'?Math.round((+new Date(d.ts)-base)/60000):+new Date(d.ts),y:+(d[m.k])||0})),
-        borderColor:RC[i%RC.length],
-        backgroundColor:RC[i%RC.length]+'10',
-        borderWidth:sets&&sets.length>3?1:1.5,
-        pointRadius:0,tension:0.25,fill:true,showLine:true
-      };
-    });
-
-    // latest value + run info
-    const lr=g[allR[allR.length-1]]||[];
-    const lv=lr.length?lr[lr.length-1][m.k]:null;
-    const cv=document.getElementById('cv-'+m.k);if(cv)cv.textContent=lv!=null?fN(lv):'—';
-    const cd=document.getElementById('cd-'+m.k);
-    if(cd&&lr.length>1){
-      const prev=lr[lr.length-2][m.k]||0;const delta=(lv||0)-prev;
-      cd.textContent=(delta>=0?'+':'')+fN(delta)+' last interval';
-      cd.style.color=delta>=0?'#69ff47':'#ff4081';
-    }
-
-    if(CH[m.k]){CH[m.k].destroy();delete CH[m.k];}
-    const ctx=document.getElementById('ca-'+m.k);if(!ctx)return;
-    CH[m.k]=new Chart(ctx,{
-      type:'scatter',
-      data:{datasets:sets},
-      options:{
-        animation:false,responsive:true,
-        interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:sets.length>1,labels:{color:'#6070a0',font:{size:9,family:'JetBrains Mono'},boxWidth:8,padding:10}},
-          tooltip:{
-            backgroundColor:'rgba(4,4,20,.95)',borderColor:m.c+'40',borderWidth:1,
-            titleColor:m.c,bodyColor:'#a0b0c8',padding:10,
-            callbacks:{
-              title:items=>mode==='rel'?items[0].parsed.x+'min into run':new Date(items[0].parsed.x).toLocaleString(),
-              label:c=>' Run #'+c.dataset.label+':  '+fN(c.parsed.y)
-            }
-          }
-        },
-        scales:{
-          x:{type:'linear',ticks:{color:'#28385a',font:{size:9,family:'JetBrains Mono'},maxTicksLimit:6,callback:v=>mode==='rel'?v+'m':new Date(v).toLocaleTimeString()},grid:{color:'rgba(24,24,56,.6)',drawBorder:false}},
-          y:{ticks:{color:'#6070a0',font:{size:9,family:'JetBrains Mono'},callback:v=>fN(v)},grid:{color:'rgba(24,24,56,.6)',drawBorder:false}}
-        }
-      }
-    });
-  });
-}
-
-async function load(){
-  try{
-    const[hist,info,io]=await Promise.all([
-      fetch('/db/history?n=10000').then(r=>r.json()),
-      fetch('/db/info').then(r=>r.json()),
-      fetch('/io').then(r=>r.json()),
-    ]);
-    D=hist;
-    document.getElementById('h-count').innerHTML='<span class="pulse" style="width:5px;height:5px;display:inline-block;border-radius:50%;background:#69ff47;margin-right:5px;animation:pulse 2s infinite"></span>'+info.count+' saves';
-    document.getElementById('h-size').textContent=info.size_mb+'MB';
-    document.getElementById('h-mem').textContent=io.memory.heap_used_mb+'MB / '+io.os.total_mem_mb+'MB RAM';
-    const g=grp(hist);const rc=Object.keys(g).length;
-    document.getElementById('h-runs').textContent=rc+' rebirth'+(rc!==1?'s':'');
-    document.getElementById('upd-time').textContent='↻ '+new Date().toLocaleTimeString();
-    document.getElementById('db-info').innerHTML=[
-      ['File',info.file?(info.file.length>28?'…'+info.file.slice(-28):info.file):'—'],
-      ['Entries',info.count],['Size',info.size_mb+'MB'],
-      ['Auto-save',info.interval_min+'min'],
-      ['First',info.first_ts?new Date(info.first_ts).toLocaleDateString():'no data yet'],
-      ['Latest',info.last_ts?new Date(info.last_ts).toLocaleTimeString():'—'],
-      ['Rebirths tracked',rc],
-    ].map(([k,v])=>\`<div class="db-row"><span class="k">\${k}</span><span class="v">\${v}</span></div>\`).join('');
-    buildRT(g);render();
-    if(hist.length===0){document.getElementById('empty').style.display='block';document.getElementById('empty').querySelector('.e-msg').textContent='No data yet';document.getElementById('empty').querySelector('.e-sub').textContent='DB saves every 5 min while the game is running. Trigger one now with POST /db/save/now';}
-  }catch(e){
-    document.getElementById('empty').style.display='block';
-    document.getElementById('empty').querySelector('.e-msg').textContent='Connection error';
-    document.getElementById('empty').querySelector('.e-sub').textContent=e.message;
-  }
-}
-
-buildML();load();setInterval(load,30000);
-</script>
-</body>
-</html>`;
 
 // ── Saves / Backup Codes HTML ────────────────────────────────────────────────
 const _SAVES_HTML = `<!DOCTYPE html>
@@ -557,26 +241,26 @@ function copyCode(btn,code){
 }
 
 function renderEntry(e,idx){
-  var hasSave=e.save&&e.save.length>10;
+  var hasSave=typeof e.save==='string'&&e.save.length>10;
   var codeHtml=hasSave
     ? \`<div class="code-box">
-        <span class="code-text" title="\${e.save}">\${e.save.slice(0,80)}…</span>
-        <button class="copy-btn" data-code="\${e.save.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" onclick="copyCode(this,this.dataset.code)">COPY CODE</button>
+        <span class="code-text" title="\${esc(e.save)}">\${esc(e.save.slice(0,80))}…</span>
+        <button class="copy-btn" data-code="\${esc(e.save)}" onclick="copyCode(this,this.dataset.code)">COPY CODE</button>
        </div>\`
     : '<div class="no-save">No save string in this entry (captured before save feature was added)</div>';
   return \`<div class="entry">
     <div class="entry-head">
       <span class="ts">\${fmtTs(e.ts)}</span>
-      <span class="run-badge">Run #\${e.run??'?'}</span>
+      <span class="run-badge">Run #\${esc(e.run??'?')}</span>
       \${idx===0?'<span style="background:rgba(105,255,71,.08);border:1px solid rgba(105,255,71,.3);color:#69ff47;font-family:JetBrains Mono,monospace;font-size:9px;padding:2px 8px;border-radius:10px">LATEST</span>':''}
     </div>
     <div class="stats-row">
       <div class="stat"><span class="stat-l">Prestige</span><span class="stat-v">\${fN(e.prestige)}</span></div>
       <div class="stat"><span class="stat-l">CpS</span><span class="stat-v">\${fN(e.cps)}</span></div>
       <div class="stat"><span class="stat-l">Bank</span><span class="stat-v">\${fN(e.cookies)}</span></div>
-      <div class="stat"><span class="stat-l">Buildings</span><span class="stat-v">\${(e.total_buildings||0).toLocaleString('en-US')}</span></div>
-      <div class="stat"><span class="stat-l">Upgrades</span><span class="stat-v">\${(e.upgrades_bought||0).toLocaleString('en-US')}</span></div>
-      <div class="stat"><span class="stat-l">Legacy Gain</span><span class="stat-v">+\${(e.legacy_gain||0).toLocaleString('en-US')}</span></div>
+      <div class="stat"><span class="stat-l">Buildings</span><span class="stat-v">\${Number(e.total_buildings||0).toLocaleString('en-US')}</span></div>
+      <div class="stat"><span class="stat-l">Upgrades</span><span class="stat-v">\${Number(e.upgrades_bought||0).toLocaleString('en-US')}</span></div>
+      <div class="stat"><span class="stat-l">Legacy Gain</span><span class="stat-v">+\${Number(e.legacy_gain||0).toLocaleString('en-US')}</span></div>
     </div>
     \${codeHtml}
   </div>\`;
@@ -603,7 +287,7 @@ async function load(){
     var list=document.getElementById('list');
     if(!saves.length){list.innerHTML='<div id="empty" style="text-align:center;padding:60px;color:var(--dim2);font-family:JetBrains Mono,monospace">No saves yet.<br><br>The game auto-saves every 5 min. Click Save Now to capture immediately.</div>';return;}
     list.innerHTML=saves.map(renderEntry).join('');
-  }catch(e){document.getElementById('list').innerHTML='<div id="empty" style="color:#ff4081;padding:40px;text-align:center;font-family:JetBrains Mono,monospace">Error: '+e.message+'</div>';}
+  }catch(e){document.getElementById('list').innerHTML='<div id="empty" style="color:#ff4081;padding:40px;text-align:center;font-family:JetBrains Mono,monospace">Error: '+esc(e.message)+'</div>';}
 }
 var _L=localStorage.getItem('cb_lang')||'en';
 var _TR={
@@ -750,7 +434,7 @@ document.getElementById('reset-input').addEventListener('input',function(){var o
     <div class="chart-grid" id="chart-grid"></div>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/assets/chart.umd.js"></script>
 <script>
 const METRICS=[
   {k:'cps',             l:'CpS',       u:'Cookies per second',          c:'#00e5ff'},
@@ -859,8 +543,8 @@ async function load(){
     document.getElementById('h-mem').textContent=io.memory.heap_used_mb+'MB / '+io.os.total_mem_mb+'MB';
     document.getElementById('h-up').textContent=Math.round(io.uptime_s/60)+'min up';
     document.getElementById('info-bar').innerHTML=
-      [['Saves indexed',info.count],['DB size',info.size_mb+'MB'],['Interval',info.interval_min+'min'],['First save',info.first_ts?new Date(info.first_ts).toLocaleString():'—'],['Last save',info.last_ts?new Date(info.last_ts).toLocaleString():'—'],['Bakery',info.last_bakery||'—']].map(([l,v])=>\`<div class="kv"><label>\${l}</label><span>\${v}</span></div>\`).join('')+
-      [['RAM',io.memory.heap_used_mb+'/'+io.os.total_mem_mb+'MB'],['Free',io.os.free_mem_mb+'MB'],['CPUs',io.os.cpus],['Up',Math.round(io.uptime_s/60)+'min'],['OS',Math.round(io.os.uptime_s/3600)+'h']].map(([l,v])=>\`<div class="kv io"><label>\${l}</label><span>\${v}</span></div>\`).join('');
+      [['Saves indexed',info.count],['DB size',info.size_mb+'MB'],['Interval',info.interval_min+'min'],['First save',info.first_ts?new Date(info.first_ts).toLocaleString():'—'],['Last save',info.last_ts?new Date(info.last_ts).toLocaleString():'—'],['Bakery',info.last_bakery||'—']].map(([l,v])=>\`<div class="kv"><label>\${esc(l)}</label><span>\${esc(v)}</span></div>\`).join('')+
+      [['RAM',io.memory.heap_used_mb+'/'+io.os.total_mem_mb+'MB'],['Free',io.os.free_mem_mb+'MB'],['CPUs',io.os.cpus],['Up',Math.round(io.uptime_s/60)+'min'],['OS',Math.round(io.os.uptime_s/3600)+'h']].map(([l,v])=>\`<div class="kv io"><label>\${esc(l)}</label><span>\${esc(v)}</span></div>\`).join('');
     if(!hist.length){document.getElementById('chart-grid').innerHTML='<p style="color:var(--dim2);padding:40px;grid-column:1/-1;text-align:center;font-family:JetBrains Mono,monospace;font-size:12px">No data yet — DB auto-saves every 5 min.<br><br>Trigger a save now: <code style="color:var(--c1)">POST /db/save/now</code></p>';return;}
     drawAll();
   }catch(e){console.error('[charts]',e);}
@@ -930,17 +614,18 @@ setInterval(_runDbSave, _DB_MS);
 
 
 const ROUTES = [
+  ['GET', /^\/assets\/chart\.umd\.js$/, async(q,s)=>{const data=await fs.promises.readFile(path.join(CONTROL_DIR,'vendor','chart.umd.js'));s.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8'});s.end(data);}],
   ['GET', /^\/control\/screenshot$/, async(q,s)=>{const gameWindow=BrowserWindow.getAllWindows().find(w=>/\/src\/index\.html(?:[?#]|$)/.test(w.webContents.getURL()));if(!gameWindow)throw {status:503,message:'Cookie Clicker window is not ready.'};const capture=await gameWindow.webContents.capturePage();_res(s,200,{mimeType:'image/png',data:capture.toPNG().toString('base64'),timestamp:Date.now(),size:capture.getSize()});}],
-  ['GET', /^\/capabilities$/, (q,s)=>_res(s,200,{api_version:CONTROL_SCHEMA.version,test_mode:TEST_MODE,test_root:TEST_MODE?TEST_ROOT:undefined,renderer_version:_state&&_state.control&&_state.control.api_version,game_version:_state&&_state.control&&_state.control.game_version,state_age_ms:_state?Date.now()-_state.timestamp:null,actions:Object.values(CONTROL_SCHEMA.actions),unsupported:CONTROL_SCHEMA.unsupported})],
+  ['GET', /^\/capabilities$/, (q,s)=>_res(s,200,{api_version:CONTROL_SCHEMA.version,runtime:{electron:process.versions.electron,node:process.versions.node},test_mode:TEST_MODE,test_root:TEST_MODE?TEST_ROOT:undefined,renderer_version:_state&&_state.control&&_state.control.api_version,game_version:_state&&_state.control&&_state.control.game_version,state_age_ms:_state?Date.now()-_state.timestamp:null,actions:Object.values(CONTROL_SCHEMA.actions),unsupported:CONTROL_SCHEMA.unsupported})],
   ['GET', /^\/control\/state$/, (q,s)=>{const st=_getState();if(!st.control)throw {status:503,message:'Full control renderer is not installed/loaded.'};_res(s,200,{...st.control,state_age_ms:Date.now()-st.timestamp});}],
-  ['GET', /^\/bridge\/(control-schema\.js|control-runtime\.js)$/, (q,s,p)=>{s.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});fs.createReadStream(path.join(CONTROL_DIR,p[0])).pipe(s);}],
+  ['GET', /^\/bridge\/(control-schema\.js|control-runtime\.js)$/, async(q,s,p)=>{const data=await fs.promises.readFile(path.join(CONTROL_DIR,p[0]));s.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8'});s.end(data);}],
   ['POST', /^\/action\/results$/, async(q,s)=>{const body=await _readBody(q);_res(s,200,_controlQueue.acknowledge(body.results));}],
   ['GET', /^\/action\/result\/([a-zA-Z0-9-]+)$/, (q,s,p)=>{const result=_controlQueue.get(p[0]);if(!result)throw {status:404,message:'Action result not found (expired history or server restart).'};_res(s,200,result);}],
-  ['GET', /^\/img\/([^/]+)$/, (q,s,p)=>{ const fp=path.join(__dirname,'src','img',p[0]); if(!fs.existsSync(fp)){_res(s,404,{error:'not found'});return;} const ext=path.extname(fp).toLowerCase(); const ct={'.png':'image/png','.jpg':'image/jpeg','.gif':'image/gif','.mp3':'audio/mpeg'}[ext]||'application/octet-stream'; s.writeHead(200,{'Content-Type':ct,'Cache-Control':'public,max-age=86400'}); fs.createReadStream(fp).pipe(s); }],
+  ['GET', /^\/img\/([^/]+)$/, async(q,s,p)=>{const fp=SECURITY.resolveAsset(path.join(__dirname,'src','img'),p[0]);const data=await fs.promises.readFile(fp);const ct={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.webp':'image/webp','.mp3':'audio/mpeg','.ogg':'audio/ogg'}[path.extname(fp).toLowerCase()];s.writeHead(200,{'Content-Type':ct,'Content-Length':data.length});s.end(data);}],
   ['GET', /^\/upgrades$/, (q,s)=>{ var u=(_state&&_state.upgrades_na_loja)||[]; _res(s,200,{upgrades:u,total:u.length,compravel:u.filter(function(x){return x.canAfford;}).length}); }],
   ['GET', /^\/visual$/, (q,s)=>{ s.writeHead(301,{'Location':'/charts','Content-Length':'0'}); s.end(); }],
 
-  ['GET',    /^\/$/,                                    (q,s)=>_res(s,200,{status:'online',mod:'Cookie Bridge v3.1',timestamp:new Date().toISOString(),jogo_conectado:_state!==null,confeitaria:_state?_state.bakery_name:null,cookies_na_conta:_state?_state.cookies_na_conta:null,docs:`http://localhost:${API_PORT}/docs`})],
+  ['GET',    /^\/$/,                                    (q,s)=>_res(s,200,{status:'online',mod:'Cookie Bridge v3.2',timestamp:new Date().toISOString(),jogo_conectado:_state!==null,confeitaria:_state?_state.bakery_name:null,cookies_na_conta:_state?_state.cookies_na_conta:null,docs:`http://localhost:${API_PORT}/docs`})],
   ['GET',    /^\/docs$/,                                (q,s)=>_resHtml(s,_buildDocs('en'))],
   ['GET',    /^\/docs\/pt$/,                            (q,s)=>_resHtml(s,_buildDocs('pt'))],
   ['GET',    /^\/state$/,                               (q,s)=>_res(s,200,_getState())],
@@ -961,7 +646,7 @@ const ROUTES = [
   ['GET',    /^\/prefs\/view$/,                 (q,s)=>{ const pr=_getState().interruptores||{},r={}; for(const k in PREF_MAP)r[k]={ativo:!!pr[k],descricao:PREF_MAP[k].d}; _res(s,200,r); }],
   ['POST', /^\/prefs\/set\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'toggle_pref',name:p[0]}))],
   ['GET',    /^\/stats$/,                                 (q,s)=>{ const st=_getState(),es=st.estatisticas||{},bs=st.buildings||[],gr=st.grimorio||{},dr=st.dragao||{},sa=st.santa||{},sl=st.sugar_lumps||{},wk=st.wrinklers||[]; _res(s,200,{_sources:{ascensoes:'Game.resets (total ascensions ever performed)',prestige:'Game.prestige (heavenly chips earned in last run)',heavenly_chips:'Game.heavenlyChips (unspent)',heavenly_chips_gastos:'Game.heavenlyChipsSpent',total_cookies_ganhos:'Game.cookiesEarned (this run)',total_cookies_reset:'Game.cookiesReset (sum across all runs)',cookies_na_conta:'Game.cookies (current bank)',cps_raw:'Game.cookiesPsRaw (always-on, ignores focus)',cps_global:'Game.globalCookiesPs (goes to 0 when unfocused)',cpc:'Game.computedMouseCps (per click)'},bakery_name:st.bakery_name||'',cookies_na_conta:st.cookies_na_conta||0,cps_raw:st.cookies_por_segundo_raw||st.cookies_por_segundo||0,cps_global:st.cookies_por_segundo||0,cookies_por_click:st.cookies_por_click||0,prestige:es.prestige||0,ascensoes:es.ascensoes||0,heavenly_chips:es.heavenly_chips||0,heavenly_chips_gastos:es.heavenly_chips_gastos||0,total_cookies_ganhos:es.total_cookies_ganhos||0,total_cookies_reset:es.total_cookies_reset||0,total_cliques:es.total_cliques||0,fps:es.fps||0,estacao:es.estacao||'none',versao_jogo:es.versao_jogo||'',buildings:bs.map(function(b){return{name:b.name,amount:b.amount,level:b.level,locked:b.locked};}),total_buildings:bs.reduce(function(s,b){return s+b.amount;},0),upgrades_comprados:(st.upgrades_comprados||[]).length,upgrades_na_loja:(st.upgrades_na_loja||[]).length,nivel_dragao:dr.nivel||0,aura1_dragao:dr.aura1||0,aura2_dragao:dr.aura2||0,nivel_santa:sa.nivel||0,sugar_lumps_disponiveis:sl.disponiveis||0,sugar_lump_tipo:sl.tipo_crescendo||null,wrinklers_ativos:wk.filter(function(w){return w&&w.phase>0;}).length,wrinklers_total_sucked:wk.reduce(function(s,w){return s+(w&&w.sucked||0);},0),grimoire_mana:gr.magic||0,grimoire_mana_max:gr.magicMax||0,timestamp:st.timestamp||null}); }],
-  ['GET',    /^\/backup$/,                              async(q,s)=>{ const st=_getState(); try{ const dir=path.join(__dirname,'cookie_bridge_backups'); if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true}); const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19),file=path.join(dir,ts+'.json'); fs.writeFileSync(file,JSON.stringify(st,null,2),'utf8'); _res(s,200,{ok:true,arquivo:file,bakery:st.bakery_name,timestamp:ts}); }catch(e){_res(s,500,{error:'Backup falhou: '+e.message});} }],
+  ['POST',    /^\/backup$/,                              async(q,s)=>{ const st=_getState(); try{ const dir=path.join(__dirname,'cookie_bridge_backups'); if(!fs.existsSync(dir))fs.mkdirSync(dir,{recursive:true}); const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19),file=path.join(dir,ts+'.json'); fs.writeFileSync(file,JSON.stringify(st,null,2),'utf8'); _res(s,200,{ok:true,arquivo:file,bakery:st.bakery_name,timestamp:ts}); }catch(e){_res(s,500,{error:'Backup falhou: '+e.message});} }],
   ['GET',    /^\/history\/states$/,                     (q,s,p,u)=>{ const n=Math.min(parseInt(u.searchParams.get('n')||'10',10),60); _res(s,200,{total:_stateLog.length,estados:_stateLog.slice(-n)}); }],
   ['GET', /^\/history\/actions$/, (q,s,p,u)=>{const n=Math.max(1,Math.min(Number(u.searchParams.get('n'))||50,200));const rows=_controlQueue.history(n);_res(s,200,{total:rows.length,acoes:rows});}],
   // ── Save DB ───────────────────────────────────────────────────────────────
@@ -974,8 +659,8 @@ const ROUTES = [
   // ── IO ────────────────────────────────────────────────────────────────────
   ['GET',    /^\/io$/,                 (q,s)=>{ const m=process.memoryUsage(); _res(s,200,{uptime_s:Math.round(process.uptime()),memory:{rss_mb:Math.round(m.rss/1024/1024*10)/10,heap_used_mb:Math.round(m.heapUsed/1024/1024*10)/10,heap_total_mb:Math.round(m.heapTotal/1024/1024*10)/10},os:{free_mem_mb:Math.round(_os.freemem()/1024/1024),total_mem_mb:Math.round(_os.totalmem()/1024/1024),load_avg:_os.loadavg(),platform:_os.platform(),cpus:_os.cpus().length,uptime_s:Math.round(_os.uptime())}}); }],
   // ── Charts ────────────────────────────────────────────────────────────────
-  ['GET',    /^\/charts$/,             (q,s)=>{ s.writeHead(200,{'Content-Type':'text/html;charset=utf-8'}); s.end(_CHARTS_HTML); }],
-  ['GET',    /^\/saves$/,             (q,s)=>{ s.writeHead(200,{'Content-Type':'text/html;charset=utf-8'}); s.end(_SAVES_HTML); }],
+  ['GET', /^\/charts$/, (q,s)=>_resHtml(s,_CHARTS_HTML)],
+  ['GET', /^\/saves$/, (q,s)=>_resHtml(s,_SAVES_HTML)],
   ['GET',    /^\/dbview$/,            (q,s)=>{ s.writeHead(301,{'Location':'/charts'}); s.end(); }],
   // ── Grimoire ──────────────────────────────────────────────────────────────
   ['GET',    /^\/grimoire\/view$/,                           (q,s)=>{ const g=_getState().grimorio; if(!g){_res(s,404,{error:'Grimoire not available. Buy the Wizard Tower.'});return;} _res(s,200,g); }],
@@ -1034,8 +719,8 @@ const ROUTES = [
   ['POST', /^\/legacy\/buy_heavenly\/(\d+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'buy_heavenly_upgrade',id:Number(p[0])}))],
   ['POST', /^\/legacy\/ascend$/, async(q,s)=>{const body=await _readBody(q);_res(s,202,_enqueue({type:'ascend',confirm:body.confirm===undefined?body.confirmar:body.confirm}));}],
   // Endpoints internos usados pelo mod (fetch dentro do jogo)
-  ['POST',   /^\/state$/,                               async(q,s)=>{ const b=await _readBody(q); if(b&&typeof b==='object'&&b.timestamp){_state=b;_stateLog.push(b);if(_stateLog.length>60)_stateLog.shift();} _res(s,200,{ok:true}); }],
-  ['GET', /^\/action\/next$/, (q,s)=>{const action=_controlQueue.next();if(action)_res(s,200,action);else{s.writeHead(204,{'Access-Control-Allow-Origin':'*','Content-Length':'0'});s.end();}}],
+  ['POST', /^\/state$/, async(q,s)=>{const b=await _readBody(q);if(!b||Array.isArray(b)||typeof b!=='object'||!b.control||b.control.api_version!==CONTROL_SCHEMA.version)throw {status:400,message:'Invalid renderer state.'};_state=Object.assign({},b,{timestamp:Date.now()});_stateLog.push(_state);if(_stateLog.length>60)_stateLog.shift();_res(s,200,{ok:true});}],
+  ['GET', /^\/action\/next$/, (q,s)=>{const action=_controlQueue.next();if(action)_res(s,200,action);else{s.writeHead(204,{'Content-Length':'0'});s.end();}}],
 ];
 
 // ── Portuguese translations ───────────────────────────────────────────────────
@@ -1098,7 +783,7 @@ const _PT_ROUTES = {
   'GET/stats': 'Todas as estatísticas com fontes Game.* documentadas — prestígio, chips, CpS raw/global, cookies, ascensões, prédios, dragão, santa, lumps, wrinklers, grimório, FPS',
   'POST/action/sell_all/{name}': 'Vender TODOS os prédios de um tipo (combo Godzamok — tipicamente com espírito Reaper of Fields)',
   'POST/game/save': 'Forçar salvamento imediato do jogo no disco (use antes de ações arriscadas)',
-  'GET/backup': 'Tirar snapshot JSON manual do estado atual → salvo na pasta cookie_bridge_backups/',
+  'POST/backup': 'Tirar snapshot JSON manual do estado atual → salvo na pasta cookie_bridge_backups/',
   'GET/history/states?n=10': 'Últimos N snapshots de estado do jogo na memória (buffer circular, máx 60)',
   'GET/history/actions?n=50': 'Últimas N ações executadas com timestamps (buffer circular, máx 200)',
   'GET/db/info': 'Metadados do banco — caminho, contagem de entradas, tamanho, intervalo, timestamps',
@@ -1257,7 +942,7 @@ function _buildDocs(lang) {
     {m:'GET',    p:'/stats',                               d:'All statistics with documented Game.* sources — prestige, chips raw/global CpS, cookies, ascensions, buildings count, dragon, santa, lumps, wrinklers, grimoire, FPS'},
     {m:'POST',   p:'/action/sell_all/{name}',              d:'Sell ALL buildings of a type (Godzamok combo — typically paired with Reaper of Fields pantheon spirit)'},
     {m:'POST',   p:'/game/save',                           d:'Force an immediate game save to disk (use before risky actions: ascend, mass sell, high-fail spells)'},
-    {m:'GET',    p:'/backup',                              d:'Take a manual JSON snapshot of current state → saved to cookie_bridge_backups/ folder'},
+    {m:'POST',    p:'/backup',                              d:'Take a manual JSON snapshot of current state → saved to cookie_bridge_backups/ folder'},
     {m:'GET',    p:'/history/states?n=10',                 d:'Last N full game state snapshots held in memory (ring buffer, max 60)'},
     {m:'GET',    p:'/history/actions?n=50',                d:'Last N executed actions with timestamps (ring buffer, max 200)'},
     {m:'GET',    p:'/db/info',                             d:'Save DB metadata — file path, entry count, size, interval, first and last timestamp'},
@@ -1392,7 +1077,7 @@ function _buildDocs(lang) {
     'Preferences':             '26 boolean preferences. Most are cosmetic (particles, milk wave, numbers). <b>screenReader</b> enables keyboard-driven fast-buy accessibility mode. <b>cloudSave</b> toggles Steam Cloud sync. <b>focus</b> reduces FPS when the window is unfocused (reduces CPU when the game is in background).',
     'Legacy & Prestige':       '<b>Prestige</b> = <code>floor(cbrt(totalCookiesBaked / 1e12))</code> — each level = +1 % CpS permanently. <b>Ascending</b> resets buildings, upgrades and cookies but earns Heavenly Chips equal to the prestige gained. <b>GET /legacy/view</b> shows the delta (chips you would gain right now). Heavenly upgrades from <b>GET /legacy/upgrades</b> apply across all future runs.',
     'Stats':                   'Annotated snapshot of every numeric field with its <code>Game.*</code> source variable. Includes <code>_sources</code> object explaining where each value comes from — useful for auditing unexpected values (e.g. confirming Ascension #24 = <code>Game.resets</code>).',
-    'Misc & History':          '<b>POST /action/sell_all/{name}</b> sells every building of one type (use for Godzamok combos). <b>POST /game/save</b> forces a disk save before risky actions. <b>GET /backup</b> takes a full JSON snapshot to <code>cookie_bridge_backups/</code>. In-memory ring buffers: last 60 state snapshots (<b>/history/states</b>) and last 200 action records (<b>/history/actions</b>).',
+    'Misc & History':          '<b>POST /action/sell_all/{name}</b> sells every building of one type (use for Godzamok combos). <b>POST /game/save</b> forces a disk save before risky actions. <b>POST /backup</b> takes a full JSON snapshot to <code>cookie_bridge_backups/</code>. In-memory ring buffers: last 60 state snapshots (<b>/history/states</b>) and last 200 action records (<b>/history/actions</b>).',
     'Database & IO':           '<a href="/charts" target="_blank" style="color:#00e5ff;font-weight:bold;font-size:13px">📈 Open Charts — evolution &amp; rebirth analytics →</a><br><br>Auto-saves every <b>5 min</b> to <code>%USERPROFILE%/CookieBridge/saves.ndjson</code>. Each entry = stats + full save string (same base64 as Export Save). Cap 200 MB / 80 % rotation. <b>/db/info</b> → metadata. <b>/db/history</b> → timeseries data. <b>/db/save/latest</b> → last save string to restore. <b>/io</b> → Node.js + OS memory.',
   };
 
@@ -1521,7 +1206,7 @@ function _buildDocs(lang) {
     '      path=path.replace("{"+inp.getAttribute("data-param")+"}",encodeURIComponent(v));',
     '    });',
     '    if(!ok||path.indexOf("{")!==-1){sta.textContent="\\u26a0 Fill in all parameters";sta.style.color="#e67e22";return;}',
-    '    var url="http://localhost:"+PORT+path;',
+    '    var url=path;',
     '    var opts={method:method,headers:{"Content-Type":"application/json","Accept":"application/json"}};',
     '    if(hasBody){var be=document.getElementById("body-"+tid);if(be&&be.value.trim()){try{JSON.parse(be.value);opts.body=be.value;}catch(e){sta.textContent="\\u26a0 Invalid JSON: "+e.message;sta.style.color="#e67e22";return;}}}',
     '    sta.textContent="\\u29d7 Sending\\u2026";sta.style.color="#888";res.style.display="none";',
@@ -1584,7 +1269,7 @@ function _buildDocs(lang) {
     '    };',
     '    document.getElementById("dbg-btn-bkp").onclick=function(){',
     '      var b=document.getElementById("dbg-btn-bkp");b.textContent="Saving...";',
-    '      fetch("/backup").then(function(r){return r.json();}).then(function(){b.textContent="Saved!";setTimeout(function(){b.textContent="Save Backup";},2000);}).catch(function(){b.textContent="Error";});',
+    '      fetch("/backup",{method:"POST"}).then(function(r){return r.json();}).then(function(){b.textContent="Saved!";setTimeout(function(){b.textContent="Save Backup";},2000);}).catch(function(){b.textContent="Error";});',
     '    };',
     '    document.getElementById("dbg-btn-state").onclick=function(){',
     '      _dbgOpen=!_dbgOpen;',
@@ -1598,11 +1283,12 @@ function _buildDocs(lang) {
     '    _dbgUpdate();setInterval(_dbgUpdate,1000);',
     '  }',
     '',
+    "function esc(value){return String(value==null?'':value).replace(/[&<>\"']/g,function(c){return '&#'+c.charCodeAt(0)+';';});}",
     '  // ── Live View ─────────────────────────────────────────────────────────',
     '  var _liveTimer=null,_livePaused=false,_mgDetailKey=null,_lastD=null;',
     '  function fmt(n){',
     '    if(n===undefined||n===null)return "?";',
-    '    if(typeof n!=="number")return String(n);',
+    '    n=Number(n);if(isNaN(n))return "?";',
     '    var NS=["million","billion","trillion","quadrillion","quintillion","sextillion","septillion","octillion","nonillion","decillion","undecillion","duodecillion","tredecillion","quattuordecillion","quindecillion","sexdecillion","septendecillion","octodecillion","novemdecillion","vigintillion"];',
     '    var neg=n<0;if(neg)n=-n;var s;',
     '    if(n>=1e6){var e=Math.min(Math.floor(Math.log10(n)/3)*3,63);var i=e/3-2;s=(i>=0&&i<NS.length)?(n/Math.pow(10,e)).toFixed(3)+" "+NS[i]:n.toExponential(3);}',
@@ -1618,9 +1304,9 @@ function _buildDocs(lang) {
     '      var ico=\'<div style="width:24px;height:24px;min-width:24px;background-image:url(/img/icons.png);background-position:\'+(0-(ic[0]*24))+\'px \'+(0-(ic[1]*24))+\'px;background-size:864px 888px;image-rendering:pixelated"></div>\';',
     '      return \'<tr style="color:\'+(ok?\'#ccc\':\'#556\')+\'">\'+',
     '        \'<td style="padding:2px 6px">\'+ico+\'</td>\'+',
-    '        \'<td style="padding:3px 10px">\'+sp.name+\'</td>\'+',
-    '        \'<td style="padding:3px 8px;color:#5bc8f5">\'+sp.cost+\'</td>\'+',
-    '        \'<td style="padding:3px 8px;color:#f5a742">\'+(sp.failChance||0)+\'%</td>\'+',
+    '        \'<td style="padding:3px 10px">\'+esc(sp.name)+\'</td>\'+',
+    '        \'<td style="padding:3px 8px;color:#5bc8f5">\'+esc(sp.cost)+\'</td>\'+',
+    '        \'<td style="padding:3px 8px;color:#f5a742">\'+esc(sp.failChance||0)+\'%</td>\'+',
     '        \'<td style="padding:3px 8px;color:\'+(ok?\'#2d9e54\':\'#663333\')+\'">\'+(ok?\'\\u2713\':\'\\u2717\')+\'</td></tr>\';',
     '    }).join(\'\');',
     '    return \'<table style="width:100%;border-collapse:collapse">\'+',
@@ -1636,7 +1322,7 @@ function _buildDocs(lang) {
     '    var SLOTS=[\'Diamond\',\'Ruby\',\'Jade\'];',
     '    var spirits=pt.spirits||[];',
     '    var slotted=pt.slots||[-1,-1,-1];',
-    '    var sMap={};spirits.forEach(function(sp){sMap[sp.id]=sp;});',
+    '    var sMap=Object.create(null);spirits.forEach(function(sp){sMap[sp.id]=sp;});',
     '    var slotRows=SLOTS.map(function(sn,i){',
     '      var spId=slotted[i];var sp=(spId!=null&&spId!==-1)?sMap[spId]:null;',
     '      var ic=sp&&sp.icon?sp.icon:[0,0];',
@@ -1645,7 +1331,7 @@ function _buildDocs(lang) {
     '      return \'<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #1a1a32">\'+',
     '        icoHtml+',
     '        \'<span style="color:#888;font-size:9px;min-width:52px;text-transform:uppercase">\'+sn+\'</span>\'+',
-    '        \'<span style="color:\'+(sp?\'#ccc\':\'#444\')+\';font-size:11px">\'+(sp?sp.name:\'\\u2014 empty\')+\'</span></div>\';',
+    '        \'<span style="color:\'+(sp?\'#ccc\':\'#444\')+\';font-size:11px">\'+(sp?esc(sp.name):\'\\u2014 empty\')+\'</span></div>\';',
     '    }).join(\'\');',
     '    var unslotted=spirits.filter(function(sp){return sp.slot<0;});',
     '    var unHtml=\'\';',
@@ -1654,7 +1340,7 @@ function _buildDocs(lang) {
     '        \'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">\'+',
     '        unslotted.map(function(sp){',
     '          var ic=sp.icon||[0,0];',
-    '          return \'<div title="\'+sp.name+\'" style="width:24px;height:24px;background-image:url(/img/icons.png);background-position:\'+(0-(ic[0]*24))+\'px \'+(0-(ic[1]*24))+\'px;background-size:864px 888px;image-rendering:pixelated;cursor:default"></div>\';',
+    '          return \'<div title="\'+esc(sp.name)+\'" style="width:24px;height:24px;background-image:url(/img/icons.png);background-position:\'+(0-(ic[0]*24))+\'px \'+(0-(ic[1]*24))+\'px;background-size:864px 888px;image-rendering:pixelated;cursor:default"></div>\';',
     '        }).join(\'\')+',
     '        \'</div>\';',
     '    }',
@@ -1671,7 +1357,7 @@ function _buildDocs(lang) {
     '        var pct=cell.growthPct||0;',
     '        var m=cell.mature;',
     '        var spr=\'<div style="width:40px;height:40px;background-image:url(/img/gardenPlants.png);background-position:\'+(0-(ic[0]*40))+\'px \'+(0-(ic[1]*40))+\'px;background-size:200px 1440px;image-rendering:pixelated"></div>\';',
-    '        return \'<td title="\'+cell.seedName+\' \'+pct+\'%" style="width:40px;height:40px;background:\'+(m?\'#0a2010\':\'#081208\')+\';border:1px solid \'+(m?\'#1a4020\':\'#0d1a12\')+\';padding:0">\'+spr+\'</td>\';',
+    '        return \'<td title="\'+esc(cell.seedName)+\' \'+esc(pct)+\'%" style="width:40px;height:40px;background:\'+(m?\'#0a2010\':\'#081208\')+\';border:1px solid \'+(m?\'#1a4020\':\'#0d1a12\')+\';padding:0">\'+spr+\'</td>\';',
     '      }).join(\'\');',
     '      return \'<tr>\'+cells+\'</tr>\';',
     '    }).join(\'\');',
@@ -1688,10 +1374,10 @@ function _buildDocs(lang) {
     '      var dt=(delta>0?\'+\':\'\')+delta.toFixed(2);',
     '      var icoTd=\'\';if(hasIco&&g.icon){var ic=g.icon;icoTd=\'<td style="padding:3px 6px"><div style="width:24px;height:24px;background-image:url(/img/icons.png);background-position:\'+(0-(ic[0]*24))+\'px \'+(0-(ic[1]*24))+\'px;background-size:864px 888px;image-rendering:pixelated"></div></td>\';}',
     '      return \'<tr style="font-size:11px">\'+icoTd+',
-    '        \'<td style="padding:3px 10px;color:#ccc">\'+g.name+\'</td>\'+',
+    '        \'<td style="padding:3px 10px;color:#ccc">\'+esc(g.name)+\'</td>\'+',
     '        \'<td style="padding:3px 8px;color:#f5e642">$\'+g.price.toFixed(2)+\'</td>\'+',
     '        \'<td style="padding:3px 8px;color:\'+dc+\'">\'+dt+\'</td>\'+',
-    '        \'<td style="padding:3px 8px;color:#5bc8f5">\'+g.portfolio+\'/\'+g.maxPortfolio+\'</td></tr>\';',
+    '        \'<td style="padding:3px 8px;color:#5bc8f5">\'+esc(g.portfolio)+\'/\'+esc(g.maxPortfolio)+\'</td></tr>\';',
     '    }).join(\'\');',
     '    return \'<table style="width:100%;border-collapse:collapse">\'+',
     '      \'<thead><tr style="color:#3a5070;font-size:9px;letter-spacing:1px">\'+',
@@ -1712,7 +1398,7 @@ function _buildDocs(lang) {
     '    var affordable=upgs.filter(function(u){return !u.bought&&u.canAfford;});',
     '    var runH=Math.floor(runMs/3600000);var runM=Math.floor((runMs%3600000)/60000);',
     '    var runStr=runMs>0?(runH>0?runH+"h ":"")+runM+"m this run":"—";',
-    '    function s2(l,v,c){return \'<div style="background:#0a0a20;border:1px solid #1a1a38;border-radius:4px;padding:6px 10px">\'+\'<div style="color:#3a5070;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">\'+l+\'</div>\'+\'<div style="color:\'+(c||\'#f5e642\')+\';font-size:14px;font-weight:700">\'+v+\'</div></div>\';}',
+    '    function s2(l,v,c){return \'<div style="background:#0a0a20;border:1px solid #1a1a38;border-radius:4px;padding:6px 10px">\'+\'<div style="color:#3a5070;font-size:9px;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px">\'+esc(l)+\'</div>\'+\'<div style="color:\'+(c||\'#f5e642\')+\';font-size:14px;font-weight:700">\'+esc(v)+\'</div></div>\';}',
     '    var html=\'\';',
     '    html+=\'<div style="background:#0d1a0d;border:1px solid #1a3a1a;border-radius:6px;padding:10px 14px;margin-bottom:10px">\';',
     '    html+=\'<div style="color:#3a5070;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Ascending now would give</div>\';',
@@ -1731,7 +1417,7 @@ function _buildDocs(lang) {
     '    if(affordable.length){',
     '      html+=\'<div style="color:#5bc8f5;font-size:10px;margin-bottom:4px">Affordable now (\'+affordable.length+\'):</div>\';',
     '      html+=\'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">\';',
-    '      affordable.slice(0,12).forEach(function(u){html+=\'<span style="background:#0a1a2a;border:1px solid #1a3050;border-radius:3px;padding:2px 6px;font-size:10px;color:#aaa">\'+u.name+\'</span>\';});',
+    '      affordable.slice(0,12).forEach(function(u){html+=\'<span style="background:#0a1a2a;border:1px solid #1a3050;border-radius:3px;padding:2px 6px;font-size:10px;color:#aaa">\'+esc(u.name)+\'</span>\';});',
     '      if(affordable.length>12)html+=\'<span style="color:#556;font-size:10px">+\'+(affordable.length-12)+\' more</span>\';',
     '      html+=\'</div>\';',
     '    }',
@@ -1782,20 +1468,20 @@ function _buildDocs(lang) {
     '    var el=document.getElementById("live-content");if(!el)return;',
     '    var sc=function(l,v,c,sub){',
     '      return \'<div style="background:#0a1525;border:1px solid #1a3050;border-radius:6px;padding:10px 14px">\'+',
-    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1.5px;margin-bottom:4px;text-transform:uppercase">\'+l+\'</div>\'+',
-    '        \'<div style="color:\'+(c||"#f5e642")+\';font-size:17px;font-weight:700;word-break:break-all;line-height:1.2">\'+v+\'</div>\'+',
-    '        (sub?\'<div style="color:#3a5070;font-size:10px;margin-top:3px">\'+sub+\'</div>\':"")+',
+    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1.5px;margin-bottom:4px;text-transform:uppercase">\'+esc(l)+\'</div>\'+',
+    '        \'<div style="color:\'+(c||"#f5e642")+\';font-size:17px;font-weight:700;word-break:break-all;line-height:1.2">\'+esc(v)+\'</div>\'+',
+    '        (sub?\'<div style="color:#3a5070;font-size:10px;margin-top:3px">\'+esc(sub)+\'</div>\':"")+',
     '        \'</div>\';',
     '    };',
     '    var bg=function(l,v,on){',
     '      return \'<div style="background:\'+(on?"#0a2010":"#0c0c1e")+\';border:1px solid \'+(on?"#1a4a1a":"#1a1a32")+\';border-radius:4px;padding:5px 12px;flex:1;min-width:120px">\'+',
-    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1px;margin-bottom:2px;text-transform:uppercase">\'+l+\'</div>\'+',
-    '        \'<div style="color:\'+(on?"#2d9e54":"#556")+\';font-size:11px;font-weight:600">\'+v+\'</div></div>\';',
+    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1px;margin-bottom:2px;text-transform:uppercase">\'+esc(l)+\'</div>\'+',
+    '        \'<div style="color:\'+(on?"#2d9e54":"#556")+\';font-size:11px;font-weight:600">\'+esc(v)+\'</div></div>\';',
     '    };',
     '    var mc=function(l,v,bar){',
     '      return \'<div style="background:#0a1525;border:1px solid #1a3050;border-radius:6px;padding:8px 12px">\'+',
-    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase">\'+l+\'</div>\'+',
-    '        \'<div style="color:#aaa;font-size:11px">\'+v+\'</div>\'+(bar||"")+\'</div>\';',
+    '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1px;margin-bottom:4px;text-transform:uppercase">\'+esc(l)+\'</div>\'+',
+    '        \'<div style="color:#aaa;font-size:11px">\'+esc(v)+\'</div>\'+(bar||"")+\'</div>\';',
     '    };',
     '    var wmc=function(key,l,v,bar){',
     '      var s=\'cursor:pointer\';',
@@ -1842,7 +1528,7 @@ function _buildDocs(lang) {
     '      var chips=(d.buildings||[]).map(function(b){',
     '        var clr=b.amount>500?"#f5e642":b.amount>100?"#2d9e54":"#ccc";',
     '        return \'<span style="background:#0a1525;border:1px solid #1a3050;border-radius:3px;padding:2px 7px;font-size:11px;white-space:nowrap">\'+',
-    '          \'<span style="color:#445">\'+b.name.split(" ")[0]+\'</span><span style="color:\'+ clr +\'">×\'+b.amount+\'</span></span>\';',
+    '          \'<span style="color:#445">\'+esc(b.name.split(" ")[0])+\'</span><span style="color:\'+ clr +\'">×\'+esc(b.amount)+\'</span></span>\';',
     '      }).join("");',
     '      var bldgsRow=\'<div style="background:#0a0a18;border:1px solid #111128;border-radius:6px;padding:10px 12px;margin-bottom:10px">\'+',
     '        \'<div style="color:#3a5070;font-size:9px;letter-spacing:1.5px;margin-bottom:8px;text-transform:uppercase">Buildings</div>\'+',
@@ -1889,7 +1575,7 @@ function _buildDocs(lang) {
     '  fetch("/state").then(function(r){return r.json();}).then(function(st){',
     '    var ups=(st.upgrades_na_loja||[]);',
     '    var uHtml=ups.length',
-    '      ?ups.map(function(u){return\'<option value="\'+u.name+\'">\'+u.name+\'</option>\';}).join("")',
+    '      ?ups.map(function(u){return\'<option value="\'+esc(u.name)+\'">\'+esc(u.name)+\'</option>\';}).join("")',
     '      :\'<option value="">No upgrades in store right now</option>\';',
     '    document.querySelectorAll(\'select[data-live="upgrades"]\').forEach(function(sel){',
     '      sel.innerHTML=uHtml;sel.style.color="#f5e642";',
@@ -1902,7 +1588,7 @@ function _buildDocs(lang) {
     '  fetch("/garden/seeds").then(function(r){return r.json();}).then(function(d){',
     '    var seeds=Array.isArray(d)?d:[];',
     '    var sHtml=seeds.length',
-    '      ?seeds.map(function(s){return\'<option value="\'+s.id+\'">\'+s.id+\' — \'+s.name+\'</option>\';}).join("")',
+    '      ?seeds.map(function(s){return\'<option value="\'+esc(s.id)+\'">\'+esc(s.id)+\' — \'+esc(s.name)+\'</option>\';}).join("")',
     '      :\'<option value="">No seeds discovered yet</option>\';',
     '    document.querySelectorAll(\'select[data-live="seeds"]\').forEach(function(sel){',
     '      sel.innerHTML=sHtml;sel.style.color="#f5e642";',
@@ -2059,7 +1745,7 @@ ${sectionHtml}
 </main>
 
 <footer style="border-top:1px solid #111;padding:14px 32px;text-align:center;color:#333;font-size:11px">
-  Cookie Bridge v3.1 &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a> &nbsp;·&nbsp; ${lang==='pt'?'Clique em <b>&#x25b6; Test</b> em qualquer rota para testar ao vivo':'Click <b>&#x25b6; Test</b> on any route to try it live'}
+  Cookie Bridge v3.2 &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a> &nbsp;·&nbsp; ${lang==='pt'?'Clique em <b>&#x25b6; Test</b> em qualquer rota para testar ao vivo':'Click <b>&#x25b6; Test</b> on any route to try it live'}
 </footer>
 
 <script>${scriptContent}</script>
@@ -2069,10 +1755,11 @@ ${sectionHtml}
 
 const _server = httpMod.createServer(async (req, res) => {
   try {
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,DELETE,OPTIONS','Access-Control-Allow-Headers':'Content-Type'});
-      res.end(); return;
-    }
+    const access = _security.guard(req, res);
+    if (access.handled) return;
+    if (access.loginPage) return _resHtml(res, SECURITY.loginPage);
+    if (access.login) {const body=await _readBody(req,1024);return _res(res,200,_security.login(body.token,res));}
+    if (access.pathname === '/auth/logout' && req.method === 'POST') return _res(res,200,_security.logout(req,res));
     const u = new URL(req.url, `http://${API_HOST}:${API_PORT}`);
     const m = req.method.toUpperCase();
     for (const [rm, pat, fn] of ROUTES) {
@@ -2093,7 +1780,7 @@ _server.on('error', e => {
 });
 // ═══════════════════════════════════════════════════════════════════════════
 
-let DEV=1;//display menu and js console
+let DEV=1;//Preserve the inherited mod mode (including no Steam achievement sync).
 let BETA=0;//save and load using different save slot
 
 let saveFile=(BETA?`saveBeta`:`save`)+`.cki`;
@@ -2130,12 +1817,25 @@ function launch(){
 		//icon:path.join(__dirname,'icon.png'),
 		webPreferences:{
 			backgroundThrottling:false,
-			preload:path.join(__dirname,'preload.js'),
-			nodeIntegration:true,
+			preload:path.join(CONTROL_DIR,'control-preload.js'),
+			nodeIntegration:false,
 			contextIsolation:true,
 			affinity:'Cookie Clicker',
 		}
 	});
+	const gameFile=path.join(__dirname,'src','index.html');
+	let gameFrame=null;
+	win.webContents.on('did-start-navigation',(event,url,inPlace,isMainFrame,processId,frameId)=>{if(isMainFrame)gameFrame=SECURITY.trustedGameURL(url,gameFile)?{url,processId,frameId}:null;});
+	win.webContents.on('did-frame-navigate',(event,url,code,status,isMainFrame,processId,frameId)=>{if(isMainFrame)gameFrame=SECURITY.trustedGameURL(url,gameFile)?{url,processId,frameId}:null;});
+	ipcMain.removeHandler('cookie-bridge-connect');
+	ipcMain.handle('cookie-bridge-connect',event=>{
+		if(!SECURITY.trustedSender(event,win.webContents,gameFile,gameFrame))throw new Error('Untrusted bridge sender.');
+		return {port:API_PORT,token:_security.rendererToken};
+	});
+	win.webContents.on('will-navigate',(event,url)=>{if(!SECURITY.trustedGameURL(url,gameFile))event.preventDefault();});
+	const openExternalPage=url=>{if(/^https?:\/\//.test(url))shell.openExternal(url).catch(()=>{});};
+	if(typeof win.webContents.setWindowOpenHandler==='function')win.webContents.setWindowOpenHandler(({url})=>{openExternalPage(url);return {action:'deny'};});
+	else win.webContents.on('new-window',(event,url)=>{event.preventDefault();openExternalPage(url);});
 	
 	let send=(id,data,callback)=>{
 		if (quit) return false;
@@ -2665,6 +2365,7 @@ function launch(){
 	let splashDur=DEV?0:2.5;
 	
 	ipcMain.on('toMain',(e,args)=>{
+		if(!win || !SECURITY.trustedSender(e,win.webContents,gameFile,gameFrame))return;
 		getMessage(e,args);
 	});
 	
@@ -2677,7 +2378,7 @@ function launch(){
 	setTimeout(()=>{
 		if (!TEST_MODE) win.maximize();
 		win.loadFile(path.join(__dirname,'/src/index.html'),{query:{bridgePort:String(API_PORT),...(BETA?{beta:'1'}:{})}});
-		if (DEV && !TEST_MODE) win.webContents.openDevTools();
+		if (process.env.COOKIE_BRIDGE_DEVTOOLS === '1' && !TEST_MODE) win.webContents.openDevTools();
 	},1000*splashDur);
 }
 

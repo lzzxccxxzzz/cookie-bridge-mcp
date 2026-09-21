@@ -1,4 +1,4 @@
-# Cookie Bridge 3.1 control coverage
+# Cookie Bridge 3.2 control coverage
 
 This map targets Cookie Clicker 2.053. The 80-action registry and its 101 MCP
 tools share one contract. Implementation follows local game source and native

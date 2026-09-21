@@ -33,7 +33,7 @@ $gameExe = Join-Path $gameRoot 'Cookie Clicker.exe'
 if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $gameExe }) {
     throw 'Close this Cookie Clicker instance before installing.'
 }
-$controlFiles = @('main.js', 'control-schema.js', 'control-runtime.js', 'control-queue.js', 'info.txt')
+$controlFiles = @('main.js', 'control-schema.js', 'control-runtime.js', 'control-queue.js', 'control-security.js', 'control-preload.js', 'info.txt', 'vendor\chart.umd.js', 'vendor\chart.LICENSE.md')
 foreach ($source in @('start.js') + @($controlFiles | ForEach-Object { 'mod_api\' + $_ })) {
     if (-not (Test-Path -LiteralPath (Join-Path $ROOT $source))) { throw "Missing source file: $source" }
 }
@@ -68,6 +68,7 @@ if (-not (Test-Path $MOD_DEST)) {
     New-Item -ItemType Directory -Path $MOD_DEST -Force | Out-Null
 }
 foreach ($ControlFile in $controlFiles) {
+    New-Item -ItemType Directory -Path (Split-Path (Join-Path $MOD_DEST $ControlFile)) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path (Join-Path $ROOT 'mod_api') $ControlFile) -Destination (Join-Path $MOD_DEST $ControlFile) -Force
 }
 Write-Host "[OK] mod_api installed to $MOD_DEST" -ForegroundColor Green

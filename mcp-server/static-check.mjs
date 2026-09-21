@@ -11,7 +11,7 @@ import { createServer } from './server.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-const files = ['start.js', 'mod_api/main.js', 'mod_api/control-schema.js', 'mod_api/control-runtime.js', 'mod_api/control-queue.js', 'mcp-server/server.mjs', 'mcp-server/static-check.mjs', 'mcp-server/control-test.mjs', 'mcp-server/test-support.mjs', 'mcp-server/integration-test.mjs', 'mcp-server/restart-test.mjs', 'mcp-server/verify-installed.mjs', 'mcp-server/smoke-test.mjs', 'mcp-server/chromium-debug-test.mjs', 'mcp-server/goal-run.mjs'];
+const files = ['start.js', 'mod_api/main.js', 'mod_api/control-schema.js', 'mod_api/control-runtime.js', 'mod_api/control-queue.js', 'mod_api/control-security.js', 'mod_api/control-preload.js', 'mcp-server/server.mjs', 'mcp-server/bridge-auth.mjs', 'mcp-server/security-test.mjs', 'mcp-server/security-integration.mjs', 'mcp-server/static-check.mjs', 'mcp-server/control-test.mjs', 'mcp-server/test-support.mjs', 'mcp-server/integration-test.mjs', 'mcp-server/restart-test.mjs', 'mcp-server/verify-installed.mjs', 'mcp-server/smoke-test.mjs', 'mcp-server/chromium-debug-test.mjs', 'mcp-server/goal-run.mjs'];
 for (const file of files) {
   const result = spawnSync(process.execPath, ['--check', path.join(root, file)], {encoding: 'utf8'});
   assert.equal(result.status, 0, file + ': ' + result.stderr);

@@ -4,8 +4,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import schema from "../mod_api/control-schema.js";
+import {localBridgeURL, authHeaders} from './bridge-auth.mjs';
 
-const BRIDGE_URL = (process.env.COOKIE_BRIDGE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const BRIDGE_URL = localBridgeURL(process.env.COOKIE_BRIDGE_URL || "http://127.0.0.1:8000");
 const REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.COOKIE_BRIDGE_TIMEOUT_MS) || 10000);
 const RESULT_TIMEOUT_MS = Math.max(0, Math.min(60000, Number(process.env.COOKIE_BRIDGE_RESULT_TIMEOUT_MS) || 10000));
 const terminal = new Set(["succeeded", "failed", "awaiting_confirmation", "cancelled", "expired", "indeterminate"]);
@@ -18,7 +19,7 @@ async function bridgeRequest(path, { method = "GET", body } = {}) {
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const response = await fetch(BRIDGE_URL + path, {
-      method, headers: body === undefined ? undefined : { "content-type": "application/json" },
+      method, headers: authHeaders(["POST","DELETE"].includes(method) ? { "content-type": "application/json" } : {}), redirect: 'error',
       body: body === undefined ? undefined : JSON.stringify(body), signal: controller.signal,
     });
     const raw = await response.text();

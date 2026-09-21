@@ -76,6 +76,7 @@ test('MCP rejects version mismatches, propagates stale-state errors and never re
   });
   await new Promise(resolve=>http.listen(0,'127.0.0.1',resolve));
   const oldURL=process.env.COOKIE_BRIDGE_URL;
+  const oldToken=process.env.COOKIE_BRIDGE_TOKEN;process.env.COOKIE_BRIDGE_TOKEN='0'.repeat(64);
   process.env.COOKIE_BRIDGE_URL='http://127.0.0.1:'+http.address().port;
   let client,server;
   try {
@@ -91,6 +92,7 @@ test('MCP rejects version mismatches, propagates stale-state errors and never re
   } finally {
     if(client)await client.close();if(server)await server.close();
     if(oldURL===undefined)delete process.env.COOKIE_BRIDGE_URL;else process.env.COOKIE_BRIDGE_URL=oldURL;
+    if(oldToken===undefined)delete process.env.COOKIE_BRIDGE_TOKEN;else process.env.COOKIE_BRIDGE_TOKEN=oldToken;
     await new Promise(resolve=>http.close(resolve));
   }
 });

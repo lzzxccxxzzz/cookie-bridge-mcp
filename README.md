@@ -1,10 +1,10 @@
-# Cookie Bridge MCP 3.1
+# Cookie Bridge MCP 3.2
 
-面向 Steam Cookie Clicker 的本地控制桥，提供 **101 个 MCP 工具、80 个类型化游戏动作**。共享 Schema、HTTP 队列和游戏内执行器统一使用 3.1.0 协议。
+面向 Steam Cookie Clicker 的本地控制桥，提供 **101 个 MCP 工具、80 个类型化游戏动作**。共享 Schema、HTTP 队列和游戏内执行器统一使用 3.2.0 协议。
 
 本版本针对 Cookie Clicker **2.053** 开发与回归。它让 Agent 读取状态、发现操作条件、执行原生游戏动作并核验回执；不是绕过解锁、资源或冷却的作弊接口。
 
-2026-09-21 验收：**101/101 工具、18/18 实机测试组、10/10 离线测试通过**；325 次 MCP 调用、235 条记录状态断言，未捕获到渲染器异常。进程重启恢复的 5 项检查也通过。详见下方验收报告。
+2026-09-21 验收：**101/101 工具、18/18 实机测试组、30/30 离线测试通过**；325 次 MCP 调用、235 条记录状态断言，未捕获到渲染器异常。进程重启恢复的 5 项检查与 15 项真实 HTTP 安全检查也通过。详见 [安全复核](docs/security-review-3.2.0.md) 和下方验收报告。
 
 ## 覆盖范围
 
@@ -30,7 +30,7 @@ npm run check
 npm test
 ```
 
-安装器备份旧桥接文件到游戏目录的 `cookie-bridge-backups/<时间戳>/`，保留 `start.js.original`，不会导入、重置或替换游戏存档。重启游戏后，默认服务为 `http://127.0.0.1:8000`；文档页面为 `/docs`。
+安装器备份旧桥接文件到游戏目录的 `cookie-bridge-backups/<时间戳>/`，保留 `start.js.original`，不会导入、重置或替换游戏存档。重启游戏后，默认服务为 `http://127.0.0.1:8000`；文档页面为 `/docs`，现在需要登录。首次启动会在 `%USERPROFILE%\CookieBridge\access-token` 创建随机令牌；MCP 默认从该文件读取，不需要把令牌写进配置。网页控制台需粘贴该令牌登录。
 
 正常使用前先启动 Steam 客户端。本机验证时，Steam 未运行会导致游戏在原生接口初始化期间退出；启动 Steam 后正常运行。隔离测试不依赖 Steam 登录。
 
@@ -68,6 +68,7 @@ MCP 客户端配置（换成实际仓库路径）：
 cd mcp-server
 .\prepare-test.ps1 -Launch
 npm run test:integration
+npm run test:security
 npm run test:restart
 npm run smoke-test
 ```
@@ -80,7 +81,9 @@ npm run smoke-test
 
 这是基本完整的原版游戏控制面，不是“穷尽每一种随机结果、所有升级组合和全部成就”的证明。升级和目录按当前游戏读取；新游戏版本仍需回归。原版未实现的 Stock Market 占位功能、Steam/系统对话框、第三方 Mod API、任意 JavaScript 执行不属于 MCP 能力。
 
-HTTP 服务仅绑定回环地址，但继承了本地宽松 CORS、没有身份认证，具有存档读写权限。只在可信本机使用；不要公开端口、代理到公网或与不可信客户端共享。Chromium 调试仅在隔离测试副本开启。正常数据日志位于用户目录的 `CookieBridge/`，可能含导出存档/礼物回执，按私人数据处理。
+3.2.0 已修复图片目录穿越、无鉴权控制和控制台 HTML 注入。HTTP 仅绑定回环地址，使用本机令牌、独立执行器凭据及跨站请求检查；网页会话有时限且可吊销。旧版本不建议继续使用。
+
+只在可信本机使用；不要公开端口、代理到公网或共享令牌。游戏自带的旧 Electron、Steam 原生库和第三方 Mod 不在 npm 安全审计覆盖内。Chromium 调试仅在隔离测试副本开启。正常数据日志位于用户目录的 `CookieBridge/`，可能含导出存档/礼物回执，按私人数据处理。详细威胁边界见 [SECURITY.md](SECURITY.md)。
 
 ## 来源
 

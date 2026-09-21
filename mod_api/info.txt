@@ -3,7 +3,7 @@
   "ID": "cookie_ai_bridge",
   "Author": "naibu",
   "Description": "Cookie Bridge v3: typed vanilla game controls, catalogs, minigames, dragon, seasons, prestige, gifts, saves and UI adapters over HTTP and MCP, with renderer execution receipts. See the coverage matrix for version-specific limits.",
-  "ModVersion": 3.1,
+  "ModVersion": 3.2,
   "GameVersion": "2.053",
   "Date": "21/09/2026",
   "Dependencies": [],

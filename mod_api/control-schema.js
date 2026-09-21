@@ -5,7 +5,7 @@
   else root.CookieBridgeSchema = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
-  var VERSION = '3.1.0';
+  var VERSION = '3.2.0';
   var actions = Object.create(null);
   function field(type, description, options) { return Object.assign({type: type, description: description}, options || {}); }
   function str(description, options) { return field('string', description, Object.assign({minLength: 1, maxLength: 256}, options)); }

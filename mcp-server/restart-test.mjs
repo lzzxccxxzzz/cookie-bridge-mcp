@@ -14,7 +14,7 @@ try {
   await t.cdp.evaluate('Game.bakeryNamePrompt();true');const oldPrompt=(await t.invoke('get_ui_state')).result.prompt.token;
   await t.invoke('prompt_cancel');await t.cdp.evaluate('CookieBridge.pausar();true');
   const lost=await t.invoke('enqueue_game_action',{type:'click_cookie',wait_for_result:false});
-  const dispatched=await json(bridgeURL+'/action/next');assert.equal(dispatched._bridge.id,lost.id); // Simulated lost delivery; no gameplay execution.
+  const dispatched=await t.cdp.evaluate(`(async()=>{const c=await cookieBridgeConnection.connect();const r=await fetch('http://127.0.0.1:'+c.port+'/action/next',{headers:{Authorization:'Bearer '+c.token}});return r.json();})()`);assert.equal(dispatched._bridge.id,lost.id); // Simulated lost delivery; no gameplay execution.
   const pending=await t.invoke('enqueue_game_action',{type:'click_cookie',wait_for_result:false});
   await t.cdp.evaluate('setTimeout(()=>Steam.quit(),50)');await t.close();t=null;
   await until(async()=>{try{await json(bridgeURL+'/capabilities');return false;}catch{return true;}});

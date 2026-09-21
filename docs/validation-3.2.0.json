@@ -1,0 +1,404 @@
+{
+  "bridge_version": "3.2.0",
+  "game_version": 2.053,
+  "started_at": "2026-09-21T03:37:08.639Z",
+  "finished_at": "2026-09-21T03:44:04.973Z",
+  "status": "passed",
+  "coverage": {
+    "registered": 101,
+    "passed": 101,
+    "missing": []
+  },
+  "renderer_exceptions": 0,
+  "offline_tests": 30,
+  "restart": {
+    "mode": "isolated Electron process restart",
+    "checks": [
+      "completed receipt survives process restart",
+      "dispatched work becomes indeterminate and is not replayed",
+      "queued work resumes once, with one real click",
+      "old element reference is rejected after restart",
+      "old prompt token is rejected after restart"
+    ],
+    "status": "passed"
+  },
+  "security": {
+    "version": "3.2.0",
+    "game_version": 2.053,
+    "runtime": {
+      "electron": "11.5.0",
+      "node": "12.18.3"
+    },
+    "mode": "isolated Electron HTTP security regression",
+    "started_at": "2026-09-21T03:45:11.828Z",
+    "checks": [
+      {
+        "name": "unauthenticated data and control endpoints are closed",
+        "status": "passed"
+      },
+      {
+        "name": "forged Host, Origin, Fetch-Metadata and file-origin client calls are blocked",
+        "status": "passed"
+      },
+      {
+        "name": "invalid tokens and simple cross-site write body types are rejected",
+        "status": "passed"
+      },
+      {
+        "name": "renderer-only state, dispatch and receipt routes reject client credentials",
+        "status": "passed"
+      },
+      {
+        "name": "encoded traversal and Windows path variations cannot read app files",
+        "status": "passed"
+      },
+      {
+        "name": "preflight does not grant authentication and foreign origins get no CORS permission",
+        "status": "passed"
+      },
+      {
+        "name": "dashboards show only a sign-in page without credentials",
+        "status": "passed"
+      },
+      {
+        "name": "login requires same Origin and an exact token; oversized bodies fail",
+        "status": "passed"
+      },
+      {
+        "name": "session reads work; session mutations require exact Origin and JSON",
+        "status": "passed"
+      },
+      {
+        "name": "authenticated dashboards compile, use local scripts, and expose no access token",
+        "status": "passed"
+      },
+      {
+        "name": "save rendering preserves hostile text without creating markup in Chromium",
+        "status": "passed"
+      },
+      {
+        "name": "renderer credential is IPC-only, and cannot enqueue commands or reset databases",
+        "status": "passed"
+      },
+      {
+        "name": "browser session can be revoked without revoking the separate MCP token",
+        "status": "passed"
+      },
+      {
+        "name": "protected bridge controls and external links are not MCP game targets",
+        "status": "passed"
+      },
+      {
+        "name": "confirmed client action still completes once, with a native game delta",
+        "status": "passed"
+      }
+    ],
+    "status": "passed",
+    "finished_at": "2026-09-21T03:45:15.872Z"
+  },
+  "cases": [
+    {
+      "group": "reads",
+      "name": "state, catalogs, discovery and PNG screenshot",
+      "status": "passed",
+      "duration_ms": 1488,
+      "mcp_calls": 26,
+      "recorded_assertions": 0,
+      "positive_tools": [
+        "get_bridge_status",
+        "get_capabilities",
+        "get_game_state",
+        "get_game_stats",
+        "get_building",
+        "get_upgrades",
+        "get_game_catalog",
+        "get_golden_cookies",
+        "get_active_effects",
+        "get_minigame_state",
+        "get_dragon_state",
+        "get_prestige_state",
+        "get_news_state",
+        "get_action_queue",
+        "get_action_history",
+        "get_ui_state",
+        "get_game_screenshot"
+      ]
+    },
+    {
+      "group": "goal",
+      "name": "earn 10K, buy building/upgrade and collect golden cookie through MCP",
+      "status": "passed",
+      "duration_ms": 129603,
+      "mcp_calls": 16,
+      "recorded_assertions": 5,
+      "positive_tools": [
+        "click_cookie",
+        "buy_building",
+        "buy_upgrade",
+        "click_shimmer",
+        "force_save"
+      ]
+    },
+    {
+      "group": "buildings",
+      "name": "every building, buy/sell modes, bulk, levels and legacy endpoint",
+      "status": "passed",
+      "duration_ms": 32931,
+      "mcp_calls": 33,
+      "recorded_assertions": 34,
+      "positive_tools": [
+        "buy_building",
+        "store_mode",
+        "store_bulk",
+        "buy_building_max",
+        "sell_building",
+        "mute_building",
+        "sugarlump_use",
+        "sell_all_of_type",
+        "sell_all_buildings"
+      ]
+    },
+    {
+      "group": "store",
+      "name": "upgrade types, vault, buy all, switches and selectors",
+      "status": "passed",
+      "duration_ms": 19932,
+      "mcp_calls": 20,
+      "recorded_assertions": 14,
+      "positive_tools": [
+        "upgrade_vault",
+        "buy_upgrade",
+        "prompt_respond",
+        "store_buy_all",
+        "upgrade_choices",
+        "upgrade_choose",
+        "switch_set"
+      ]
+    },
+    {
+      "group": "garden",
+      "name": "plant, harvest, soil, freeze, lump refill and sacrifice",
+      "status": "passed",
+      "duration_ms": 17205,
+      "mcp_calls": 16,
+      "recorded_assertions": 16,
+      "positive_tools": [
+        "minigame_open",
+        "garden_select_seed",
+        "garden_plant",
+        "garden_harvest",
+        "garden_click_tile",
+        "garden_harvest_all",
+        "garden_soil",
+        "garden_freeze",
+        "garden_recharge",
+        "garden_sacrifice"
+      ]
+    },
+    {
+      "group": "pantheon",
+      "name": "slot every spirit, remove and refill",
+      "status": "passed",
+      "duration_ms": 14412,
+      "mcp_calls": 14,
+      "recorded_assertions": 14,
+      "positive_tools": [
+        "minigame_open",
+        "pantheon_set",
+        "pantheon_remove",
+        "pantheon_recharge"
+      ]
+    },
+    {
+      "group": "grimoire",
+      "name": "cast every spell and recharge with a lump",
+      "status": "passed",
+      "duration_ms": 11458,
+      "mcp_calls": 11,
+      "recorded_assertions": 11,
+      "positive_tools": [
+        "minigame_open",
+        "cast_spell",
+        "grimoire_recharge"
+      ]
+    },
+    {
+      "group": "stock",
+      "name": "every good, brokers, office, all loans and graph settings",
+      "status": "passed",
+      "duration_ms": 51554,
+      "mcp_calls": 51,
+      "recorded_assertions": 50,
+      "positive_tools": [
+        "minigame_open",
+        "stock_buy",
+        "stock_sell",
+        "stock_sell_all",
+        "stock_buy_broker",
+        "stock_upgrade_office",
+        "stock_take_loan",
+        "stock_graph",
+        "stock_visibility"
+      ]
+    },
+    {
+      "group": "dragon",
+      "name": "egg, every training level, two auras and pet",
+      "status": "passed",
+      "duration_ms": 33512,
+      "mcp_calls": 33,
+      "recorded_assertions": 31,
+      "positive_tools": [
+        "buy_upgrade",
+        "special_menu",
+        "upgrade_dragon",
+        "dragon_set_aura",
+        "dragon_pet"
+      ]
+    },
+    {
+      "group": "seasons",
+      "name": "five seasons, seasonal purchases, Santa and shimmers",
+      "status": "passed",
+      "duration_ms": 27979,
+      "mcp_calls": 28,
+      "recorded_assertions": 25,
+      "positive_tools": [
+        "set_season",
+        "buy_upgrade",
+        "special_menu",
+        "upgrade_santa",
+        "click_shimmers",
+        "click_golden_cookie"
+      ]
+    },
+    {
+      "group": "cookies",
+      "name": "fortune news, wrinkler click/pop and lump harvest",
+      "status": "passed",
+      "duration_ms": 6423,
+      "mcp_calls": 6,
+      "recorded_assertions": 4,
+      "positive_tools": [
+        "click_ticker",
+        "wrinkler_click",
+        "wrinkler_pop",
+        "wrinkler_pop_all",
+        "harvest_lump"
+      ]
+    },
+    {
+      "group": "ui",
+      "name": "settings, menus, UI events, prompts and tiny-cookie achievement",
+      "status": "passed",
+      "duration_ms": 20496,
+      "mcp_calls": 20,
+      "recorded_assertions": 12,
+      "positive_tools": [
+        "rename_bakery",
+        "toggle_pref",
+        "set_pref",
+        "set_volume",
+        "show_menu",
+        "click_tiny_cookie",
+        "inspect_ui",
+        "ui_scroll",
+        "ui_click",
+        "ui_set_input",
+        "get_ui_state",
+        "prompt_respond",
+        "prompt_cancel",
+        "ui_pointer",
+        "dismiss_notifications",
+        "minigame_open",
+        "ui_drag"
+      ]
+    },
+    {
+      "group": "selectors",
+      "name": "every shop selector, jukebox and clone customization",
+      "status": "passed",
+      "duration_ms": 14474,
+      "mcp_calls": 14,
+      "recorded_assertions": 6,
+      "positive_tools": [
+        "upgrade_choices",
+        "upgrade_choose",
+        "ui_set_input",
+        "ui_click",
+        "show_menu",
+        "get_ui_state",
+        "prompt_cancel"
+      ]
+    },
+    {
+      "group": "gifts",
+      "name": "create and redeem a gift via MCP",
+      "status": "passed",
+      "duration_ms": 4124,
+      "mcp_calls": 4,
+      "recorded_assertions": 1,
+      "positive_tools": [
+        "gift_create",
+        "prompt_cancel",
+        "gift_redeem"
+      ]
+    },
+    {
+      "group": "prestige",
+      "name": "ascend, heavenly purchases, permanent slots and reincarnate",
+      "status": "passed",
+      "duration_ms": 13893,
+      "mcp_calls": 9,
+      "recorded_assertions": 6,
+      "positive_tools": [
+        "ascend",
+        "buy_heavenly_upgrade",
+        "prompt_cancel",
+        "permanent_slot",
+        "ascension_view",
+        "ascension_mode",
+        "reincarnate"
+      ]
+    },
+    {
+      "group": "negative",
+      "name": "invalid parameters, resources, cooldowns and stale references",
+      "status": "passed",
+      "duration_ms": 8539,
+      "mcp_calls": 11,
+      "recorded_assertions": 0,
+      "positive_tools": []
+    },
+    {
+      "group": "queue",
+      "name": "action IDs, polling, generic alias and queue cancellation",
+      "status": "passed",
+      "duration_ms": 1061,
+      "mcp_calls": 6,
+      "recorded_assertions": 1,
+      "positive_tools": [
+        "enqueue_game_action",
+        "get_action_result",
+        "get_action_queue",
+        "clear_action_queue"
+      ]
+    },
+    {
+      "group": "persistence",
+      "name": "export, reset, import and reload",
+      "status": "passed",
+      "duration_ms": 7222,
+      "mcp_calls": 7,
+      "recorded_assertions": 5,
+      "positive_tools": [
+        "rename_bakery",
+        "export_save",
+        "hard_reset",
+        "import_save",
+        "force_save",
+        "set_language"
+      ]
+    }
+  ]
+}

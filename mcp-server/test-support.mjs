@@ -4,13 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import {authHeaders,localBridgeURL} from './bridge-auth.mjs';
 
 export { assert, delay };
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const bridgeURL = process.env.COOKIE_BRIDGE_URL || 'http://127.0.0.1:8001';
 export const cdpURL = process.env.CHROMIUM_DEBUG_URL || 'http://127.0.0.1:9223';
 export async function json(url, options) {
-  const r = await fetch(url, {...options, signal: AbortSignal.timeout(15000)});
+  const headers=new URL(url).origin===localBridgeURL(bridgeURL)?authHeaders(options?.headers):options?.headers;
+  const r = await fetch(url, {...options, headers, redirect:'error', signal: AbortSignal.timeout(15000)});
   const body = await r.json();
   if (!r.ok) throw new Error(`HTTP ${r.status}: ${JSON.stringify(body)}`);
   return body;
@@ -50,11 +52,12 @@ export class CDP {
   close() { this.socket.close(); }
 }
 export async function connectTest() {
+  if(!process.env.COOKIE_BRIDGE_TOKEN_FILE && !process.env.COOKIE_BRIDGE_TOKEN)process.env.COOKIE_BRIDGE_TOKEN_FILE=path.join(here,'output','integration','bridge-data','access-token');
   const cap = await json(bridgeURL + '/capabilities');
   assert.equal(cap.test_mode, true, 'Live regression is allowed only in isolated test mode');
   const cdp = await CDP.connect();
   assert.ok(decodeURIComponent(cdp.target.url).replaceAll('\\', '/').toLowerCase().includes(cap.test_root.replaceAll('\\', '/').toLowerCase()), 'CDP must point at the isolated copy');
-  const client = new Client({name: 'cookie-bridge-integration', version: '3.1.0'});
+  const client = new Client({name: 'cookie-bridge-integration', version: cap.api_version});
   const transport = new StdioClientTransport({command: process.execPath, args: [path.join(here, 'server.mjs')], env: {...process.env, COOKIE_BRIDGE_URL: bridgeURL, COOKIE_BRIDGE_RESULT_TIMEOUT_MS: '15000'}});
   await client.connect(transport);
   const invoke = async (name, args = {}, allowError = false) => {

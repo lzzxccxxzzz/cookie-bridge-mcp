@@ -5,6 +5,7 @@ var PORT=_configuredPort||8000,MAX_LOGS=300,_logs=[],_panelOpen=false,_panelEl=n
 var _paused=false,_backoffUntil=0,_pauseBtn=null,_needSlowRebuild=false;
 var _lastSlowState={};
 var _control=null,_pollBusy=false,_pendingReceipts=[];
+var _rendererToken=null;
 var _controlBase=document.currentScript&&document.currentScript.src?new URL('.',document.currentScript.src).href:'http://localhost:'+PORT+'/bridge/';
 try{_pendingReceipts=JSON.parse(sessionStorage.getItem('CookieBridgeReceiptsV3')||'[]');if(!Array.isArray(_pendingReceipts))_pendingReceipts=[];}catch(e){_pendingReceipts=[];}
 function persistReceipts(){try{sessionStorage.setItem('CookieBridgeReceiptsV3',JSON.stringify(_pendingReceipts));}catch(e){log('warn','Cannot persist receipts across a renderer reload: '+e.message);}}
@@ -91,19 +92,19 @@ function createPanel(){
   tbar.appendChild(_pauseBtn);
 
   tbar.appendChild(mkBtn("Ping",function(){
-    fetch("http://localhost:"+PORT+"/").then(function(r){return r.json();})
+    request("/")
     .then(function(d){log("info","Ping OK · jogo="+d.jogo_conectado+" · bakery="+d.confeitaria);})
     .catch(function(e){log("error","Ping: "+e.message);});
   }));
 
   tbar.appendChild(mkBtn("State",function(){
-    fetch("http://localhost:"+PORT+"/state").then(function(r){return r.json();})
+    request("/state")
     .then(function(d){log("info","cookies="+d.cookies_na_conta+" · cps="+d.cookies_por_segundo);})
     .catch(function(e){log("error","State: "+e.message);});
   }));
 
   tbar.appendChild(mkBtn("Fila",function(){
-    fetch("http://localhost:"+PORT+"/action/queue").then(function(r){return r.json();})
+    request("/action/queue")
     .then(function(d){log("info","Fila: "+d.total+" ação(ões) pendente(s)");})
     .catch(function(e){log("error","Fila: "+e.message);});
   }));
@@ -123,25 +124,15 @@ function createPanel(){
     });
   }));
 
-  // Input de porta (salvo/restaurado via save/load do mod)
+  // The trusted main process owns the authenticated endpoint.
   var portLabel=document.createElement("span");
   portLabel.textContent="Porta:";
   portLabel.style.cssText="color:#888;font-size:10px;white-space:nowrap";
   var portInput=document.createElement("input");
   portInput.id="cookiebridge-port-input";
   portInput.type="text";portInput.value=PORT;
+  portInput.readOnly=true;
   portInput.style.cssText="width:50px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;padding:2px 5px;font-size:11px;font-family:monospace";
-  portInput.addEventListener("change",function(){
-    var np=parseInt(portInput.value,10);
-    if(!isNaN(np)&&np>0&&np<65536){
-      PORT=np;
-      ft.innerHTML="<a href='http://localhost:"+PORT+"/docs' target='_blank' style='color:#5bc8f5'>Swagger UI</a> &nbsp;|&nbsp; porta "+PORT;
-      log("info","Porta alterada para "+PORT+". Salve o jogo para persistir.");
-    } else {
-      portInput.value=PORT;
-      log("warn","Porta inválida (1–65535).");
-    }
-  });
   tbar.appendChild(portLabel);
   tbar.appendChild(portInput);
 
@@ -149,7 +140,7 @@ function createPanel(){
   la.style.cssText="overflow-y:auto;flex:1;padding:8px 10px;color:#ccc;min-height:80px";
   _logAreaEl=la;
 
-  // var ft é usado no closure acima; declarado aqui, já está disponível quando o handler rodar
+  // Links open in the user's browser, where the dashboard has its own login.
   var ft=document.createElement("div");
   ft.style.cssText="background:#111;padding:4px 10px;border-top:1px solid #222;color:#555;font-size:11px;flex-shrink:0";
   ft.innerHTML="<a href='http://localhost:"+PORT+"/docs' target='_blank' style='color:#5bc8f5'>Swagger UI</a> &nbsp;|&nbsp; porta "+PORT;
@@ -231,10 +222,11 @@ function loadControl(){
     });
 }
 function request(path,body){
+  if(!_rendererToken)return Promise.reject(new Error('Renderer authentication is not ready.'));
   var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},15000);
-  return fetch("http://localhost:"+PORT+path,body===undefined?{signal:controller.signal}:{
+  return fetch("http://127.0.0.1:"+PORT+path,body===undefined?{signal:controller.signal,headers:{Authorization:'Bearer '+_rendererToken},redirect:'error'}:{
     signal:controller.signal,
-    method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)
+    method:"POST",headers:{"Content-Type":"application/json",Authorization:'Bearer '+_rendererToken},redirect:'error',body:JSON.stringify(body)
   }).then(function(r){if(!r.ok&&r.status!==204)throw new Error(path+" HTTP "+r.status);return r.status===204?null:r.json();}).finally(function(){clearTimeout(timer);});
 }
 
@@ -243,7 +235,13 @@ Game.registerMod("cookie_ai_bridge",{
     createPanel();
     log("info","Mod v3 iniciado — Cookie Clicker "+(Game.version||"?"));
     setStatus(false,"loading control API");
-    loadControl().then(function(){setStatus(true,"ativo");}).catch(function(e){log("error",e.message);setStatus(false,"control API unavailable");});
+    Promise.resolve().then(function(){
+      if(!window.cookieBridgeConnection)throw new Error('Secure preload is missing. Reinstall Cookie Bridge.');
+      return window.cookieBridgeConnection.connect();
+    }).then(function(connection){
+      if(connection.port!==PORT)throw new Error('Unexpected bridge port.');
+      _rendererToken=connection.token;return loadControl();
+    }).then(function(){setStatus(true,"ativo");}).catch(function(e){log("error",e.message);setStatus(false,"control API unavailable");});
     Game.Notify("Cookie Bridge v3","API em http://localhost:"+PORT+" | Swagger: /docs",[0,0],8000);
 
     var fc=0,sc=0;

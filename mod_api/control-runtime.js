@@ -45,6 +45,10 @@
     function element(target, allowHidden) {
       var el = typeof target === 'string' ? (refs.get(target) || doc.getElementById(target)) : target;
       need(el && el.isConnected, 'UI element is missing or stale. Run inspect_ui again.', 'stale_target');
+      need(!el.closest('#cookiebridge-panel,#cookiebridge-toggle'), 'Bridge administration is not a game control.', 'protected_target');
+      var link = el.closest('a[href]'), href = link && link.getAttribute('href');
+      need(!href || href.startsWith('#') || href.startsWith('javascript:'), 'External navigation is not an in-game control.', 'protected_target');
+      need(el.type !== 'file' && el.type !== 'password', 'Sensitive/system fields are not game controls.', 'protected_target');
       need(allowHidden || visible(el), 'UI element is not visible.', 'not_visible');
       return el;
     }
@@ -109,7 +113,7 @@
         elements: list.slice(a.offset, a.offset + a.limit).map(function (el) {
           var r = el.getBoundingClientRect();
           return {ref: uiRef(el), id: el.id || null, tag: el.tagName.toLowerCase(), text: (el.innerText || el.textContent || el.getAttribute('aria-label') || el.title || '').slice(0, 1000),
-            type: el.type, value: el.value, checked: el.checked, read_only: !!el.readOnly, disabled: !!el.disabled || el.classList.contains('disabled'),
+            type: el.type, value: el.type === 'password' ? undefined : el.value, checked: el.checked, read_only: !!el.readOnly, disabled: !!el.disabled || el.classList.contains('disabled'),
             bounds: {x: r.x, y: r.y, width: r.width, height: r.height}};
         })};
     }
@@ -340,7 +344,7 @@
     // Live action-discovery data. Never serialize Game objects: they contain cycles,
     // DOM nodes and functions. Catalogs deliberately include locked items too.
     function read(fn, fallback) { try { return fn(); } catch (e) { return fallback === undefined ? null : fallback; } }
-    function textHTML(value) { if (typeof value !== 'string') return ''; var el = doc.createElement('div'); el.innerHTML = value; return el.textContent || ''; }
+    function textHTML(value) { if (typeof value !== 'string') return ''; var el = doc.createElement('template'); el.innerHTML = value; return el.content.textContent || ''; }
     function upgradesCatalog() {
       return Object.values(Game.UpgradesById || {}).map(function (u) {
         var prestige = u.pool === 'prestige';
