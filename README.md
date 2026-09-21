@@ -1,80 +1,40 @@
-# Cookie Bridge + MCP
+# Cookie Bridge MCP 3.1
 
-Cookie Bridge is a local HTTP bridge and in-game control panel for the Steam
-version of Cookie Clicker. This repository also contains a stdio MCP server so
-an AI agent can inspect the game and enqueue validated gameplay actions.
+面向 Steam Cookie Clicker 的本地控制桥，提供 **101 个 MCP 工具、80 个类型化游戏动作**。共享 Schema、HTTP 队列和游戏内执行器统一使用 3.1.0 协议。
 
-> 当前状态：这是一个功能覆盖面已经大幅扩展、但仍需要继续做实机回归的半成品。代码已把普通游戏操作统一到 v3 控制层，并提供离线语法、Schema 和 MCP 工具注册检查；本次整理没有修改或测试用户当前的游戏存档。
+本版本针对 Cookie Clicker **2.053** 开发与回归。它让 Agent 读取状态、发现操作条件、执行原生游戏动作并核验回执；不是绕过解锁、资源或冷却的作弊接口。
 
-## What is included
+2026-09-21 验收：**101/101 工具、18/18 实机测试组、10/10 离线测试通过**；325 次 MCP 调用、235 条记录状态断言，未捕获到渲染器异常。进程重启恢复的 5 项检查也通过。详见下方验收报告。
 
-- A patched `start.js` HTTP server with a versioned action queue, result
-  receipts, capability discovery, full control-state access, and screenshot
-  capture.
-- A `mod_api` renderer mod that executes actions through Cookie Clicker's own
-  native methods instead of directly rewriting game state where possible.
-- A shared action schema used by the MCP server, HTTP queue, and renderer.
-- A stdio MCP server with generated action tools plus read-only state/catalog
-  tools.
-- A coverage document mapping gameplay areas to action names:
-  [`docs/control-coverage.md`](docs/control-coverage.md).
+## 覆盖范围
 
-## Current coverage
+- 饼干点击、黄金/愤怒饼干、驯鹿、新闻幸运饼干、皱纹虫。
+- 全部 20 种建筑的购买/出售/等级/静音；商店批量、升级、研究、保险库、开关和选择器。
+- 糖块收获与消费；Garden、Stock Market、Pantheon、Grimoire。
+- 龙蛋与训练、双光环、抚摸龙；圣诞老人、五种节日、礼物。
+- 升天、天堂升级、永久升级槽、挑战模式选择、转生。
+- 存档导入/导出/保存/重置；偏好、语言、音量、面包店命名。
+- UI 检查、点击、输入、拖放、滚动、指针和截图，覆盖点唱机、克隆人外观等普通可见控件。
 
-The v3 registry covers the normal gameplay surface, including:
+精确动作与实现路线见 [覆盖表](docs/control-coverage.md)，测试范围和结果见 [验收说明](docs/validation.md)。
 
-- cookie clicks, golden cookies, shimmers, news ticker, wrinklers, buildings,
-  upgrades, store mode/bulk purchases, switches, save/import/reset;
-- sugar lumps and minigames: Garden, Stock Market, Pantheon, and Grimoire;
-- dragon egg, dragon auras, dragon pet actions, Santa, seasons, seasonal
-  stores, gifts, preferences, bakery name and language;
-- ascension, reincarnation, heavenly upgrades, permanent slots, and ascension
-  mode;
-- generic inspected-UI clicks, input changes, scrolling, dragging, pointer
-  events, and game screenshot retrieval for controls that are not conveniently
-  represented by a dedicated action.
+## 安装
 
-The exact action/tool count is generated from the shared schema. Run
-`npm run check` inside `mcp-server` to print it and verify that every declared
-action has a runtime handler and a registered MCP tool.
-
-## Important limitations
-
-This repository does not claim that every registered action has already passed
-a full live-game regression suite. The current snapshot has had targeted live
-work in earlier iterations, but the broad v3 control layer still needs a
-dedicated end-to-end pass against a disposable save.
-
-Some names visible in the game source are placeholders or platform-owned
-operations rather than executable vanilla gameplay. The bridge intentionally
-does not invent behavior for stock-market opportunity/refill stubs, Steam
-account/OS dialogs, arbitrary JavaScript evaluation, or third-party mod APIs.
-The UI inspection and pointer tools are the escape hatch for ordinary visible
-game controls, while destructive actions require explicit confirmation.
-
-## Install into Cookie Clicker
-
-Close Cookie Clicker before replacing its Electron entrypoint. From an elevated
-PowerShell prompt:
+要求：Windows、已安装的 Steam Cookie Clicker，以及 **Node.js 22+**（用于 MCP 和测试）。游戏自带的旧 Electron/Node 不需要升级。先关闭对应游戏实例：
 
 ```powershell
 .\install.ps1 -GameAppPath 'D:\SteamLibrary\steamapps\common\Cookie Clicker\resources\app' -NoPause
-```
-
-The installer backs up the original `start.js` as `start.js.original`, copies
-the patched server, and installs the five `mod_api` files. Start the game again
-after installation; the bridge listens on `http://127.0.0.1:8000` by default.
-
-The MCP package is not installed into the game directory:
-
-```powershell
 cd mcp-server
-npm install
+npm ci
 npm run check
-npm start
+npm test
 ```
 
-Example MCP client configuration:
+安装器备份旧桥接文件到游戏目录的 `cookie-bridge-backups/<时间戳>/`，保留 `start.js.original`，不会导入、重置或替换游戏存档。重启游戏后，默认服务为 `http://127.0.0.1:8000`；文档页面为 `/docs`。
+
+正常使用前先启动 Steam 客户端。本机验证时，Steam 未运行会导致游戏在原生接口初始化期间退出；启动 Steam 后正常运行。隔离测试不依赖 Steam 登录。
+
+MCP 客户端配置（换成实际仓库路径）：
 
 ```json
 {
@@ -82,47 +42,46 @@ Example MCP client configuration:
     "cookie-bridge": {
       "command": "node",
       "args": ["C:\\absolute\\path\\to\\cookie-bridge\\mcp-server\\server.mjs"],
-      "env": {
-        "COOKIE_BRIDGE_URL": "http://127.0.0.1:8000"
-      }
+      "env": {"COOKIE_BRIDGE_URL": "http://127.0.0.1:8000"}
     }
   }
 }
 ```
 
-## Safe verification commands
+无需把 MCP 包复制到游戏目录。Steam 更新/文件完整性验证可能还原游戏入口，届时关闭游戏并重新运行安装器。
 
-`npm run check` is offline: it parses the source, compares the schema against
-runtime handlers, and checks MCP tool registration without touching the game.
+## 动作完成与确认
 
-The repository also retains the older live smoke/CDP scripts for future tests:
-`npm run smoke-test`, `npm run chromium-debug-test`, and `npm run goal-run`.
-Those commands require a running bridge and can change the active save. Use a
-disposable test save and run them only when live testing is intended.
+先用 `get_capabilities`、状态和目录工具发现合法参数。动作返回 ID 和明确状态：
 
-## HTTP endpoints
+`queued → dispatched → succeeded / failed / awaiting_confirmation`
 
-The patched server retains the original dashboard and REST compatibility routes
-and adds the v3 control surface:
+队列还会返回 `cancelled`、`expired` 或 `indeterminate`。超时不是成功，也不是可以重复购买的依据：请用同一 ID 调用 `get_action_result`。桥接进程重启后，未派发的队列恢复，已派发但无回执的动作标为不确定，绝不自动重放；历史保留最近 200 项，未完成项另外保留。
 
-```text
-GET  /capabilities
-GET  /control/state
-GET  /control/screenshot
-POST /action/enqueue
-GET  /action/next
-POST /action/results
-GET  /action/result/:id
-GET  /history/actions
+`awaiting_confirmation` 代表原生对话框尚未完成。使用返回的 prompt token 和 `prompt_respond`；页面重载后旧 UI 引用、旧 prompt token 会失效。升天、清档、导入、卖掉全部建筑和花园献祭等 Schema 标记的操作要求 `confirm: true`。不是每个花费资源的动作都需要这个字段。
+
+## 可重复测试
+
+离线检查不会打开或修改游戏。实机测试会创建独立游戏副本、存档、用户资料和队列目录，并跳过 Steam SDK 初始化；测试脚本拒绝连接非隔离实例。
+
+```powershell
+cd mcp-server
+.\prepare-test.ps1 -Launch
+npm run test:integration
+npm run test:restart
+npm run smoke-test
 ```
 
-The MCP server checks the bridge and renderer versions before enqueueing an
-action. Results are explicit: `queued`, `dispatched`, `succeeded`, `failed`,
-`awaiting_confirmation`, `expired`, or `cancelled`; a timeout is never treated
-as a successful purchase.
+隔离桥接端口为 8001，Chromium 调试端口为 9223。实机动作走 **MCP stdio → HTTP 队列 → 游戏执行器**，CDP 仅准备测试条件并独立断言结果。10K 验收实际点击获取饼干；为避免等待随机刷新，黄金饼干由测试夹具生成。后期内容使用合成资源/解锁/冷却条件，不代表自然通关。
 
-## License and game ownership
+详见 [MCP 与测试使用说明](mcp-server/README.md)。本地 `output/` 含游戏副本与原始测试报告，已排除 Git；不要上传游戏资产或私人存档。
 
-Cookie Clicker is owned by its original creators and publisher. This project is
-an unofficial local automation/modification layer and is not affiliated with
-the Cookie Clicker developers.
+## 边界与安全
+
+这是基本完整的原版游戏控制面，不是“穷尽每一种随机结果、所有升级组合和全部成就”的证明。升级和目录按当前游戏读取；新游戏版本仍需回归。原版未实现的 Stock Market 占位功能、Steam/系统对话框、第三方 Mod API、任意 JavaScript 执行不属于 MCP 能力。
+
+HTTP 服务仅绑定回环地址，但继承了本地宽松 CORS、没有身份认证，具有存档读写权限。只在可信本机使用；不要公开端口、代理到公网或与不可信客户端共享。Chromium 调试仅在隔离测试副本开启。正常数据日志位于用户目录的 `CookieBridge/`，可能含导出存档/礼物回执，按私人数据处理。
+
+## 来源
+
+基于 [ToDyNh0 的 Cookie Bridge](https://github.com/ToDyNh0/cookie-clicker-API-mod) 扩展，保留上游历史和署名。本仓库为独立 MCP 开发分支。Cookie Clicker 归原作者与发行方所有；本项目是非官方本地修改层，不包含游戏运行资产。

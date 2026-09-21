@@ -13,14 +13,24 @@ let greenworksLaunched=false;
 // Cookie Bridge — HTTP Server (main process, port 8000)
 // ═══════════════════════════════════════════════════════════════════════════
 const httpMod = require('http');
-const API_PORT = 8000;
+const API_PORT = Number(process.env.COOKIE_BRIDGE_PORT || 8000);
+if (!Number.isInteger(API_PORT) || API_PORT < 1 || API_PORT > 65535) throw new Error('Invalid COOKIE_BRIDGE_PORT');
+const TEST_MODE = process.env.COOKIE_BRIDGE_TEST_MODE === '1';
+const TEST_ROOT = process.env.COOKIE_BRIDGE_TEST_ROOT;
+if (TEST_MODE && (!TEST_ROOT || !path.isAbsolute(TEST_ROOT))) throw new Error('Test mode requires an absolute COOKIE_BRIDGE_TEST_ROOT');
+const BRIDGE_DATA = TEST_MODE ? path.join(TEST_ROOT, 'bridge-data') : path.join(require('os').homedir(), 'CookieBridge');
+if (TEST_MODE) {
+  app.setPath('userData', path.join(TEST_ROOT, 'profile'));
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  greenworksLaunched = true; // Isolated tests never initialize Steam services.
+}
 const API_HOST = '127.0.0.1';
 let _state = null;
 let _stateLog = [];
 const CONTROL_DIR = fs.existsSync(path.join(__dirname, 'mod_api', 'control-schema.js'))
   ? path.join(__dirname, 'mod_api') : path.join(__dirname, 'mods', 'local', 'mod_api');
 const CONTROL_SCHEMA = require(path.join(CONTROL_DIR, 'control-schema.js'));
-const _controlQueue = require(path.join(CONTROL_DIR, 'control-queue.js')).createQueue();
+const _controlQueue = require(path.join(CONTROL_DIR, 'control-queue.js')).createQueue({storagePath: path.join(BRIDGE_DATA, 'actions.json')});
 function _enqueue(action) {
   if (!_state || !_state.control || _state.control.api_version !== CONTROL_SCHEMA.version) {
     throw {status: 503, message: 'Matching Cookie Bridge v3 renderer is not connected. Install all mod_api files and restart the game.'};
@@ -873,7 +883,7 @@ buildToggles();buildGrid();_applyCLang();load();setInterval(load,30000);
 
 // ── Save DB ──────────────────────────────────────────────────────────────────
 const _os      = require('os');
-const _DB_DIR  = path.join(_os.homedir(), 'CookieBridge');
+const _DB_DIR  = BRIDGE_DATA;
 const _DB_FILE = path.join(_DB_DIR, 'saves.ndjson');
 const _DB_MS   = 5 * 60 * 1000; // every 5 min
 let   _DB_COUNT = 0; // loaded on first /db/info
@@ -921,7 +931,7 @@ setInterval(_runDbSave, _DB_MS);
 
 const ROUTES = [
   ['GET', /^\/control\/screenshot$/, async(q,s)=>{const gameWindow=BrowserWindow.getAllWindows().find(w=>/\/src\/index\.html(?:[?#]|$)/.test(w.webContents.getURL()));if(!gameWindow)throw {status:503,message:'Cookie Clicker window is not ready.'};const capture=await gameWindow.webContents.capturePage();_res(s,200,{mimeType:'image/png',data:capture.toPNG().toString('base64'),timestamp:Date.now(),size:capture.getSize()});}],
-  ['GET', /^\/capabilities$/, (q,s)=>_res(s,200,{api_version:CONTROL_SCHEMA.version,renderer_version:_state&&_state.control&&_state.control.api_version,game_version:_state&&_state.control&&_state.control.game_version,state_age_ms:_state?Date.now()-_state.timestamp:null,actions:Object.values(CONTROL_SCHEMA.actions),unsupported:CONTROL_SCHEMA.unsupported})],
+  ['GET', /^\/capabilities$/, (q,s)=>_res(s,200,{api_version:CONTROL_SCHEMA.version,test_mode:TEST_MODE,test_root:TEST_MODE?TEST_ROOT:undefined,renderer_version:_state&&_state.control&&_state.control.api_version,game_version:_state&&_state.control&&_state.control.game_version,state_age_ms:_state?Date.now()-_state.timestamp:null,actions:Object.values(CONTROL_SCHEMA.actions),unsupported:CONTROL_SCHEMA.unsupported})],
   ['GET', /^\/control\/state$/, (q,s)=>{const st=_getState();if(!st.control)throw {status:503,message:'Full control renderer is not installed/loaded.'};_res(s,200,{...st.control,state_age_ms:Date.now()-st.timestamp});}],
   ['GET', /^\/bridge\/(control-schema\.js|control-runtime\.js)$/, (q,s,p)=>{s.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Access-Control-Allow-Origin':'*','Cache-Control':'no-store'});fs.createReadStream(path.join(CONTROL_DIR,p[0])).pipe(s);}],
   ['POST', /^\/action\/results$/, async(q,s)=>{const body=await _readBody(q);_res(s,200,_controlQueue.acknowledge(body.results));}],
@@ -930,11 +940,11 @@ const ROUTES = [
   ['GET', /^\/upgrades$/, (q,s)=>{ var u=(_state&&_state.upgrades_na_loja)||[]; _res(s,200,{upgrades:u,total:u.length,compravel:u.filter(function(x){return x.canAfford;}).length}); }],
   ['GET', /^\/visual$/, (q,s)=>{ s.writeHead(301,{'Location':'/charts','Content-Length':'0'}); s.end(); }],
 
-  ['GET',    /^\/$/,                                    (q,s)=>_res(s,200,{status:'online',mod:'Cookie Bridge v2.0',timestamp:new Date().toISOString(),jogo_conectado:_state!==null,confeitaria:_state?_state.bakery_name:null,cookies_na_conta:_state?_state.cookies_na_conta:null,docs:`http://localhost:${API_PORT}/docs`})],
+  ['GET',    /^\/$/,                                    (q,s)=>_res(s,200,{status:'online',mod:'Cookie Bridge v3.1',timestamp:new Date().toISOString(),jogo_conectado:_state!==null,confeitaria:_state?_state.bakery_name:null,cookies_na_conta:_state?_state.cookies_na_conta:null,docs:`http://localhost:${API_PORT}/docs`})],
   ['GET',    /^\/docs$/,                                (q,s)=>_resHtml(s,_buildDocs('en'))],
   ['GET',    /^\/docs\/pt$/,                            (q,s)=>_resHtml(s,_buildDocs('pt'))],
   ['GET',    /^\/state$/,                               (q,s)=>_res(s,200,_getState())],
-  ['GET',    /^\/action\/view\/lvl\/([^\/]+)$/,         (q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(!b){_res(s,404,{error:`Building '${p[0]}' not found.`});return;} const mx=b.name==='Cursor'?20:10,lp=(st.sugar_lumps||{}).disponiveis||0; _res(s,200,{edificio:b.name,nivel_atual:b.level,nivel_maximo:mx,falta_para_maximo:mx-b.level,pode_subir_nivel:b.level<mx,sugar_lumps_disponiveis:lp,pode_usar_agora:lp>=1&&b.level<mx,effect:`+${b.level+1}% CpS at level ${b.level+1}`}); }],
+  ['GET', /^\/action\/view\/lvl\/([^\/]+)$/, (q,s,p)=>{const st=_getState(),b=_findBuilding(st,p[0]);if(!b)throw {status:404,message:'Building not found.'};const lp=(st.sugar_lumps||{}).disponiveis||0;_res(s,200,{edificio:b.name,nivel_atual:b.level,nivel_maximo:null,custo_proximo_nivel:b.level+1,sugar_lumps_disponiveis:lp,pode_subir_nivel:true,pode_usar_agora:!!b.can_level});}],
   ['GET',    /^\/action\/view\/([^\/]+)$/,              (q,s,p)=>{ const st=_getState(),b=_findBuilding(st,p[0]); if(b){_res(s,200,{tipo:'edificio',nome:b.name,quantidade_atual:b.amount,nivel:b.level,cps_base:b.baseCps,bloqueado:b.locked,precos_compra:{'1':b.buy_price_1,'10':b.buy_price_10,'100':b.buy_price_100},precos_venda:{'1':b.sell_price_1,'10':b.sell_price_10,'100':b.sell_price_100},pode_comprar:{'1':st.cookies_na_conta>=b.buy_price_1,'10':st.cookies_na_conta>=b.buy_price_10,'100':st.cookies_na_conta>=b.buy_price_100},pode_vender:{'1':b.amount>=1,'10':b.amount>=10,'100':b.amount>=100},tem_minigame:b.has_minigame});return;} const u=_findUpgrade(st,p[0]); if(u){_res(s,200,{tipo:'upgrade',id:u.id,nome:u.name,preco:u.price,pool:u.pool,descricao:u.description,pode_comprar:u.canAfford});return;} _res(s,404,{error:`'${p[0]}' not found.`}); }],
   ['GET',    /^\/action\/view\/upgrade\/([^\/]+)$/,    (q,s,p)=>{ const st=_getState(),u=_findUpgrade(st,decodeURIComponent(p[0])); if(!u){_res(s,404,{error:`Upgrade '${decodeURIComponent(p[0])}' not found in the store. Check GET /state → upgrades_na_loja.`});return;} _res(s,200,{tipo:'upgrade',id:u.id,nome:u.name,preco:u.price,pool:u.pool,descricao:u.description,pode_comprar:u.canAfford,falta_cookies:u.canAfford?0:Math.ceil(u.price-st.cookies_na_conta)}); }],
   ['POST', /^\/action\/buy\/upgrade\/([^\/]+)$/, async(q,s,p)=>_res(s,202,_enqueue({type:'buy_upgrade',name:p[0]}))],
@@ -1039,7 +1049,7 @@ const _PT_ROUTES = {
   'POST/action/buy/upgrade/{name}': 'Comprar uma melhoria da loja pelo nome',
   'POST/action/buy/build/{name}/{n}': 'Comprar N prédios (n = 1, 10 ou 100)',
   'POST/action/sell/build/{name}/{n}': 'Vender N prédios',
-  'POST/action/enqueue': 'Adicionar ação JSON à fila FIFO — mod executa em ~500ms. Ver corpo para todos os 30 tipos de ação.',
+  'POST/action/enqueue': 'Adicionar ação à fila FIFO. Consulte /capabilities e acompanhe o recibo em /action/result/:id.',
   'GET/action/queue': 'Listar ações pendentes na fila',
   'DELETE/action/queue': 'Limpar toda a fila de ações',
   'GET/sugarlump/view': 'Contagem de sugar lumps, tipo crescendo e tempo para amadurecer',
@@ -1197,7 +1207,7 @@ function _buildDocs(lang) {
     {m:'POST',   p:'/action/buy/upgrade/{name}',          d:'Purchase an upgrade currently in the store (list loaded live from /state)'},
     {m:'POST',   p:'/action/buy/build/{name}/{n}',         d:'Buy N buildings (n = 1, 10 or 100)'},
     {m:'POST',   p:'/action/sell/build/{name}/{n}',        d:'Sell N buildings'},
-    {m:'POST',   p:'/action/enqueue',                      d:'Add JSON action to FIFO queue — mod executes it within ~500 ms. All POST endpoints above call this internally. See body textarea for all 30 action types.'},
+    {m:'POST',   p:'/action/enqueue',                      d:'Queue a typed action. Discover the full schema at /capabilities and poll /action/result/:id; acceptance is not execution.'},
     {m:'GET',    p:'/action/queue',                        d:'List pending actions in the queue'},
     {m:'DELETE', p:'/action/queue',                        d:'Clear the entire action queue'},
     {m:'GET',    p:'/sugarlump/view',                      d:'Sugar lump count, growing type and time to ripe'},
@@ -1313,7 +1323,7 @@ function _buildDocs(lang) {
 
 
   const BODY_EXAMPLES = {
-    '/action/enqueue': '{\n  "type": "click_cookie"\n}\n\n// ── All action types ──────────────────────────\n// {"type":"buy_building",   "name":"Farm",      "quantidade":10}\n// {"type":"sell_building",  "name":"Farm",      "quantidade":1}\n// {"type":"buy_upgrade",    "id":123}\n// {"type":"click_shimmer",  "index":0}\n// {"type":"sugarlump_use",  "build_name":"Farm"}\n// {"type":"sell_all_of_type","name":"Cursor"}\n// {"type":"cast_spell",     "spell_index":1}\n// {"type":"pantheon_set",   "spirit_index":2, "slot_index":0}\n// {"type":"garden_plant",   "seed_index":0, "x":0, "y":0}\n// {"type":"garden_harvest", "x":0, "y":0}\n// {"type":"garden_harvest_all"}\n// {"type":"garden_soil",    "tipo":1}\n// {"type":"stock_buy",      "ticker":"CRL", "quantidade":10}\n// {"type":"stock_sell",     "ticker":"CRL", "quantidade":10}\n// {"type":"dragon_set_aura","aura_id":5, "slot":0}\n// {"type":"upgrade_dragon"}\n// {"type":"upgrade_santa"}\n// {"type":"wrinkler_pop",   "id":0}\n// {"type":"wrinkler_pop_all"}\n// {"type":"harvest_lump"}\n// {"type":"set_season",     "nome":"christmas"}\n// {"type":"set_volume",     "tipo":"sfx", "valor":75}\n// {"type":"mute_building",  "name":"Farm"}\n// {"type":"toggle_pref",    "nome":"particles"}\n// {"type":"force_save"}\n// {"type":"ascend",         "confirmar":true}\n// {"type":"buy_heavenly_upgrade","id":456}\n// {"type":"reincarnate"}',
+    '/action/enqueue': JSON.stringify({type:'click_cookie',count:1},null,2),
     '/legacy/ascend':       '{\n  "confirmar": true\n}',
     '/legacy/buy_heavenly/{id}': '{}',
   };
@@ -1932,7 +1942,7 @@ code{background:#1a1a2e;padding:1px 6px;border-radius:3px;color:#5bc8f5;font-fam
   <img src="${IMG_GOLD}" style="width:64px;height:64px;image-rendering:pixelated;filter:drop-shadow(0 0 14px rgba(245,230,66,0.7))" alt="Cookie">
   <div>
     <h1 style="color:#f5e642;font-size:26px;font-weight:bold;letter-spacing:1px">Cookie Bridge API</h1>
-    <p style="color:#888;font-size:13px;margin-top:4px">v2.0 &nbsp;·&nbsp; ${lang==='pt'?'Servidor HTTP embutido no Electron':'HTTP server embedded in Electron'} &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a></p>
+    <p style="color:#888;font-size:13px;margin-top:4px">v${CONTROL_SCHEMA.version} &nbsp;·&nbsp; ${lang==='pt'?'Servidor HTTP embutido no Electron':'HTTP server embedded in Electron'} &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a></p>
   </div>
   <div style="margin-left:auto;display:flex;align-items:center;gap:10px">
     <a href="${lang==='pt'?'/docs':'/docs/pt'}" style="background:#0d1a0d;color:#69ff47;border:1px solid #1a4a1a;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:bold;cursor:pointer;transition:all 0.2s;text-decoration:none">${lang==='pt'?'🇺🇸 EN':'🇧🇷 PT'}</a>
@@ -2049,7 +2059,7 @@ ${sectionHtml}
 </main>
 
 <footer style="border-top:1px solid #111;padding:14px 32px;text-align:center;color:#333;font-size:11px">
-  Cookie Bridge v2.0 &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a> &nbsp;·&nbsp; ${lang==='pt'?'Clique em <b>&#x25b6; Test</b> em qualquer rota para testar ao vivo':'Click <b>&#x25b6; Test</b> on any route to try it live'}
+  Cookie Bridge v3.1 &nbsp;·&nbsp; <a href="http://localhost:${p}">http://localhost:${p}</a> &nbsp;·&nbsp; ${lang==='pt'?'Clique em <b>&#x25b6; Test</b> em qualquer rota para testar ao vivo':'Click <b>&#x25b6; Test</b> on any route to try it live'}
 </footer>
 
 <script>${scriptContent}</script>
@@ -2119,6 +2129,7 @@ function launch(){
 		backgroundColor:'#000',
 		//icon:path.join(__dirname,'icon.png'),
 		webPreferences:{
+			backgroundThrottling:false,
 			preload:path.join(__dirname,'preload.js'),
 			nodeIntegration:true,
 			contextIsolation:true,
@@ -2185,7 +2196,7 @@ function launch(){
 				if (win)
 				{
 					//win.loadFile(path.join(__dirname,'/src/index.html'),BETA?{query:{'beta':'1'}}:{});
-					let query={};
+					let query={bridgePort:String(API_PORT)};
 					if (BETA) query.beta='1';
 					if (args.modless) query.modless='1';
 					win.loadFile(path.join(__dirname,'/src/index.html'),{query:query});
@@ -2661,12 +2672,12 @@ function launch(){
 	win.setBackgroundColor('#111111');
 	//these commands are to both fix the Steam overlay being white when starting in non-fullscreen, and to prevent a white flash on startup
 	win.unmaximize();
-	win.show();
+	if (!TEST_MODE) win.show();
 	win.loadFile(path.join(__dirname,'/splash.html'));
 	setTimeout(()=>{
-		win.maximize();
-		win.loadFile(path.join(__dirname,'/src/index.html'),BETA?{query:{'beta':'1'}}:{});
-		if (DEV) win.webContents.openDevTools();
+		if (!TEST_MODE) win.maximize();
+		win.loadFile(path.join(__dirname,'/src/index.html'),{query:{bridgePort:String(API_PORT),...(BETA?{beta:'1'}:{})}});
+		if (DEV && !TEST_MODE) win.webContents.openDevTools();
 	},1000*splashDur);
 }
 

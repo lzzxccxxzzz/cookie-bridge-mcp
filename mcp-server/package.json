@@ -1,12 +1,16 @@
 {
   "name": "cookie-bridge-mcp",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "private": true,
   "type": "module",
   "description": "stdio MCP server for the local Cookie Bridge API",
   "scripts": {
     "start": "node server.mjs",
     "check": "node static-check.mjs",
+    "test": "node --test control-test.mjs",
+    "test:integration": "node integration-test.mjs",
+    "test:restart": "node restart-test.mjs",
+    "verify:installed": "node verify-installed.mjs",
     "smoke-test": "node smoke-test.mjs",
     "chromium-debug-test": "node chromium-debug-test.mjs",
     "goal-run": "node goal-run.mjs"

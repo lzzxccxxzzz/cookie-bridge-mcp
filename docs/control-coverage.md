@@ -1,10 +1,9 @@
-# Cookie Bridge v3 control coverage
+# Cookie Bridge 3.1 control coverage
 
-This is an implementation map, not a live-test certificate. The v3 layer was
-designed by reading the local Cookie Clicker source and routing normal actions
-through the game's own methods. `npm run check` validates the offline contract;
-a separate disposable-save regression run is still required for runtime
-acceptance.
+This map targets Cookie Clicker 2.053. The 80-action registry and its 101 MCP
+tools share one contract. Implementation follows local game source and native
+callbacks; test fixtures are kept outside the production control layer.
+See [validation.md](validation.md) for the dated live-test evidence and limits.
 
 ## Action map
 
@@ -46,13 +45,42 @@ confirmation instead of treating a missing item as an unknown error.
   automatically; this avoids double purchases after an HTTP timeout.
 - The renderer uses native game methods and reports actual quantities/deltas
   where the game exposes them.
-- `ascend`, `reincarnate`, import/reset, selling all buildings, Garden
-  sacrifice, and other destructive operations use explicit confirmation.
+- `ascend`, import/reset, selling all buildings and Garden sacrifice require
+  `confirm: true`. `reincarnate` is itself an explicit action on the ascension
+  screen and has no additional confirmation field. Native dialogs are handled
+  separately with `prompt_respond` and the returned token.
 - Prompt responses are bound to a fresh prompt token, preventing a stale agent
   response from answering a later dialog.
 - UI tools do not expose arbitrary JavaScript evaluation. Pointer coordinates
   are relative to an inspected element and remain subject to the game's own
   callbacks and checks.
+- Queue records survive process restart. Missing dispatched receipts become
+  `indeterminate`, never automatic retries. Completed receipts are idempotent;
+  old element refs and prompt tokens are invalid across renderer reloads.
+- Click batches are paced to the game's native rate limit and return the actual
+  registered count. Building levels have the native increasing lump cost, not
+  an invented level-10/20 cap. Pantheon swap timers use the game's 16h/4h/1h rules.
+
+## Native variants exercised
+
+The live suite includes every building type, every Grimoire spell, all Pantheon
+spirits, all five Garden soils, all Stock Market goods/offices/loans, every
+dragon training level and both aura slots, every Santa level and all five
+season switches. Upgrade coverage samples ordinary cookies, research and its
+confirmation, seasonal upgrades, vault/buy-all, Golden Switch, Shimmering Veil,
+Elder Covenant and lump-spending Sugar frenzy. It is not a purchase of every
+individual upgrade in the catalog.
+
+All four shop choice providers are exercised: Milk selector, Background
+selector, Golden cookie sound selector and Jukebox. The native clone-customizer
+button is discovered from UI inspection and its hair control is clicked through
+MCP. Generic pointer and drag behavior is checked against the big cookie and a
+Pantheon spirit respectively; this does not certify every canvas gesture.
+
+News coverage includes a fortune unlock. Shimmer coverage includes golden
+cookies and reindeer. Wrinkler tests check click damage, payouts and optional
+shiny preservation. Random rewards keep their native probability; a successful
+tool call is not a promise of a specific drop.
 
 ## Deliberately out of scope
 
@@ -62,7 +90,7 @@ refill hooks, Steam account operations, OS-native dialogs, or arbitrary
 third-party mod APIs. These are different from ordinary in-game controls and
 need a platform-specific integration or a separate mod contract.
 
-Likewise, the action registry being complete does not mean every action has
-been demonstrated in a live regression run. The next validation step is to
-install this snapshot, create a disposable save, and execute a matrix covering
-each action group while checking the returned receipts and state deltas.
+Full tool coverage is a statement about the registered interface, not an
+exhaustive proof over every game state or random outcome. Native operations
+still reject missing resources, locked features, cooldowns and invalid targets.
+Future Cookie Clicker versions and third-party mods need separate validation.

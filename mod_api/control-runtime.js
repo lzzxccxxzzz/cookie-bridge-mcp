@@ -8,6 +8,7 @@
     env = env || globalThis;
     var doc = env.document, handlers = Object.create(null);
     var refs = new Map(), refIds = new WeakMap(), refSerial = 0, promptSerial = 0, promptNode = null;
+    var epoch = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
     var aliases = {lumpConfirm: 'askLumps', screenReader: 'screenreader', fastNotes: 'notifs', scary: 'notScary'};
     function fail(code, message) { var e = new Error(message); e.code = code; throw e; }
     function need(condition, message, code) { if (!condition) fail(code || 'precondition_failed', message); }
@@ -17,7 +18,7 @@
     }
     function find(list, value) {
       var text = String(value).toLowerCase();
-      return (list || []).find(function (x) { return x && [x.id, x.name, x.dname, x.key, x.symbol].some(function (v) { return v !== undefined && String(v).toLowerCase() === text; }); });
+      return Object.values(list || {}).find(function (x) { return x && [x.id, x.name, x.dname, x.key, x.symbol].some(function (v) { return v !== undefined && String(v).toLowerCase() === text; }); });
     }
     function building(name) { var b = find(Game.ObjectsById, name); need(b, 'Building not found: ' + name, 'not_found'); return b; }
     function upgrade(a) {
@@ -74,7 +75,7 @@
       if (!Game.promptOn) { promptNode = null; return null; }
       var node = Game.promptL && Game.promptL.firstElementChild;
       if (node !== promptNode) { promptNode = node; promptSerial++; }
-      return {token: 'prompt-' + promptSerial, text: (Game.promptL.textContent || '').slice(0, 20000), dismissible: !Game.promptNoClose,
+      return {token: 'prompt-' + epoch + '-' + promptSerial, text: (Game.promptL.textContent || '').slice(0, 20000), dismissible: !Game.promptNoClose,
         options: Array.from(Game.promptL.querySelectorAll('[id^="promptOption"]')).filter(visible).map(function (el) { return {index: Number(el.id.replace('promptOption', '')), text: el.textContent, disabled: el.classList.contains('disabled')}; })};
     }
     function confirmFirst() {
@@ -97,7 +98,7 @@
     function refresh() { Game.recalculateGains = 1; Game.upgradesToRebuild = 1; Game.storeToRefresh = 1; }
     function uiRef(el) {
       var ref = refIds.get(el);
-      if (!ref) { ref = 'cb-element-' + (++refSerial); refIds.set(el, ref); refs.set(ref, el); }
+      if (!ref) { ref = 'cb-element-' + epoch + '-' + (++refSerial); refIds.set(el, ref); refs.set(ref, el); }
       return ref;
     }
     function inspectUI(a) {
@@ -113,9 +114,13 @@
         })};
     }
 
-    handlers.click_cookie = function (a) {
+    handlers.click_cookie = async function (a) {
       var before = Game.cookieClicks;
-      for (var i = 0; i < a.count; i++) call(Game, 'ClickCookie');
+      for (var i = 0; i < a.count; i++) {
+        var wait = Math.max(0, 21 - (Date.now() - Game.lastClick));
+        if (wait) await new Promise(function (resolve) { env.setTimeout(resolve, wait); });
+        playing(); call(Game, 'ClickCookie');
+      }
       return {attempted: a.count, clicks_registered: Game.cookieClicks - before};
     };
     function tradeBuilding(a, sell) {
@@ -195,7 +200,7 @@
       need(!a.fortune_only || effect && effect.type === 'fortune', 'No fortune is currently active.', 'not_found');
       click(Game.tickerL); return {fortune_collected: !!(effect && effect.type === 'fortune'), ticker_clicks: Game.TickerClicks};
     };
-    handlers.click_tiny_cookie = function () { call(Game, 'ShowMenu', 'stats'); call(Game, 'ClickTinyCookie'); return {won: call(Game, 'HasAchiev', 'Tiny cookie')}; };
+    handlers.click_tiny_cookie = function () { if (Game.onMenu !== 'stats') call(Game, 'ShowMenu', 'stats'); call(Game, 'ClickTinyCookie'); return {won: call(Game, 'HasAchiev', 'Tiny cookie')}; };
     handlers.harvest_lump = function () {
       need(call(Game, 'canLumps'), 'Sugar lumps are locked.', 'locked'); var age = Date.now() - Game.lumpT;
       need(age >= Game.lumpMatureAge && age < Game.lumpOverripeAge, 'Lump is not manually harvestable; wait for maturity or the automatic harvest.');
@@ -327,7 +332,7 @@
       var code = doc.getElementById('giftCode'); need(code && code.value, 'Gift wrapping failed.'); return {code: code.value, cookies: a.cookies};
     };
     handlers.gift_redeem = function (a) { giftReady(); call(Game, 'promptGiftRedeem'); input('giftCode', a.code); var before = Game.cookiesReceived; click('promptOption0'); need(Game.cookiesReceived > before, 'Gift was not redeemed.'); return {cookies_received: Game.cookiesReceived - before}; };
-    handlers.force_save = function () { call(Game, 'WriteSave'); return {saved: true}; };
+    handlers.force_save = async function () { call(Game, 'WriteSave'); var deadline = Date.now() + 10000; while (Game.isSaving && Date.now() < deadline) await new Promise(function (resolve) { env.setTimeout(resolve, 25); }); need(!Game.isSaving, 'Native save completion timed out.', 'save_timeout'); return {saved: true}; };
     handlers.export_save = function () { return {save: call(Game, 'WriteSave', 1)}; };
     handlers.import_save = function (a) { freePrompt(); var backup = call(Game, 'WriteSave', 1); need(call(Game, 'LoadSave', a.save), 'Save import was rejected by the native parser.'); return {imported: true, previous_save: backup}; };
     handlers.hard_reset = function () { freePrompt(); var backup = call(Game, 'WriteSave', 1); call(Game, 'HardReset', 2); return {reset: true, previous_save: backup}; };
@@ -337,7 +342,7 @@
     function read(fn, fallback) { try { return fn(); } catch (e) { return fallback === undefined ? null : fallback; } }
     function textHTML(value) { if (typeof value !== 'string') return ''; var el = doc.createElement('div'); el.innerHTML = value; return el.textContent || ''; }
     function upgradesCatalog() {
-      return (Game.UpgradesById || []).map(function (u) {
+      return Object.values(Game.UpgradesById || {}).map(function (u) {
         var prestige = u.pool === 'prestige';
         return {id: u.id, name: u.name, display_name: u.dname, pool: u.pool, unlocked: !!u.unlocked, bought: !!u.bought,
           price: read(function () { return u.getPrice(); }), lump_price: u.priceLumps || 0,
@@ -375,7 +380,7 @@
               soils: M.soilsById.map(function (s) { return {id: s.id, key: s.key, name: s.name, required_farms: s.req, tick_minutes: s.tick, available: b.amount >= s.req, description: textHTML(s.effsStr || s.desc)}; }),
               effects: Object.assign({}, M.effs), seeds_unlocked: M.plantsUnlockedN, seed_count: M.plantsN, harvests: M.harvests, harvests_total: M.harvestsTotal, sacrifices: M.convertTimes, can_sacrifice: M.plantsUnlockedN >= M.plantsN};
           } else if (pair[0] === 'pantheon') {
-            extra = {slots: M.slot.slice(), swaps: M.swaps, swap_time: M.swapT, swap_cooldown_ms: [16 * 3600000, 16 * 3600000, 4 * 3600000, 0][M.swaps],
+            extra = {slots: M.slot.slice(), swaps: M.swaps, swap_time: M.swapT, swap_cooldown_ms: [16 * 3600000, 4 * 3600000, 3600000, 0][M.swaps],
               spirits: M.godsById.map(function (g) { return {id: g.id, key: g.key, name: g.name, slot: g.slot, description: textHTML(g.desc), diamond: textHTML(g.desc1), ruby: textHTML(g.desc2), jade: textHTML(g.desc3)}; })};
           } else if (pair[0] === 'grimoire') {
             extra = {magic: M.magic, magic_max: M.magicM, spells_cast: M.spellsCast, spells_cast_total: M.spellsCastTotal,
@@ -403,7 +408,7 @@
         lumps: {available: Game.lumps, total: Game.lumpsTotal, unlocked: read(function () { return Game.canLumps(); }, false), type: Game.lumpCurrentType, started_at: Game.lumpT, mature_age_ms: Game.lumpMatureAge, ripe_age_ms: Game.lumpRipeAge, overripe_age_ms: Game.lumpOverripeAge, refill_remaining_frames: Game.lumpRefill},
         season: {current: Game.season, base: Game.baseSeason, remaining_frames: Game.seasonT, uses: Game.seasonUses},
         prestige: {level: Game.prestige, chips: Game.heavenlyChips, spent: Game.heavenlyChipsSpent, mode: Game.ascensionMode, next_mode: Game.nextAscensionMode, permanent_slots: (Game.permanentUpgrades || []).slice(), gain: read(function () { return Math.max(0, Math.floor(Game.HowMuchPrestige(Game.cookiesEarned + Game.cookiesReset)) - Math.floor(Game.HowMuchPrestige(Game.cookiesReset))); })},
-        research: {id: Game.research, remaining_frames: Game.researchT}, grandmapocalypse: {elder_wrath: Game.elderWrath, pledge_remaining_frames: Game.pledgeT, pledges: Game.pledges, covenant: read(function () { return owned('Elder Covenant'); }, false)},
+        research: {id: Game.nextResearch, remaining_frames: Game.researchT}, grandmapocalypse: {elder_wrath: Game.elderWrath, pledge_remaining_frames: Game.pledgeT, pledges: Game.pledges, covenant: read(function () { return owned('Elder Covenant'); }, false)},
         minigames: minigamesState(), prompt: prompt(), menu: Game.onMenu, store_mode: Game.buyMode, store_bulk: Game.buyBulk, choice_selector: Game.choiceSelectorOn};
     }
     function snapshot() {
@@ -414,7 +419,7 @@
         auras: Object.keys(Game.dragonAuras).map(function (id) { var a = Game.dragonAuras[id]; return {id: Number(id), name: a.name, display_name: a.dname, description: textHTML(a.desc), unlocked: Game.dragonLevel >= Number(id) + 4}; })};
       var santa = {unlocked: owned('A festive hat'), level: Game.santaLevel, max_level: Game.santaLevels.length - 1, levels: Game.santaLevels.slice(), next_cost: Math.pow(Game.santaLevel + 1, Game.santaLevel + 1)};
       var control = {api_version: schema.version, game_version: Game.version, snapshot_at: Date.now(), live: live, buildings: bs, upgrades: up,
-        achievements: (Game.AchievementsById || []).map(function (a) { return {id: a.id, name: a.name, display_name: a.dname, won: !!a.won, pool: a.pool, description: textHTML(a.desc)}; }),
+        achievements: Object.values(Game.AchievementsById || {}).map(function (a) { return {id: a.id, name: a.name, display_name: a.dname, won: !!a.won, pool: a.pool, description: textHTML(a.desc)}; }),
         dragon: dragon, santa: santa, preferences: Object.assign({}, Game.prefs), volume: {sfx: Game.volume, music: Game.volumeMusic},
         seasons: Object.keys(Game.seasons || {}).map(function (key) { var s = Game.seasons[key], u = s.triggerUpgrade; return {id: key, name: s.name, trigger_upgrade: u && u.id, trigger_name: s.trigger, price: u && u.getPrice(), unlocked: !!(u && u.unlocked), bought: !!(u && u.bought)}; }),
         ascension_modes: Object.keys(Game.ascensionModes || {}).map(function (key) { var mode = Game.ascensionModes[key]; return {id: Number(key), name: mode.name, description: textHTML(mode.desc)}; }),
@@ -431,17 +436,17 @@
         jardim: gm.available ? {available: true, width: 6, height: 6, soil: gm.soil, seeds: gm.seeds, grid: Array.from({length: 6}, function (_, x) { return Array.from({length: 6}, function (_, y) { var t = gm.plot[y][x]; return t.seed_id === null ? null : {seedId: t.seed_id, seedName: t.name, growthStage: t.age, mature: t.mature}; }); })} : null,
         bolsa: sm.available ? {available: true, goods: stockGoods} : null,
         dragao: Object.assign({nivel: dragon.level, pode_evoluir: dragon.can_upgrade}, dragon), santa: Object.assign({nivel: santa.level, nivel_maximo: santa.max_level, pode_evoluir: santa.unlocked && santa.level < santa.max_level && Game.cookies > santa.next_cost}, santa),
-        interruptores: prefs, legado: Object.assign({prestige: Game.prestige, heavenly_chips: Game.heavenlyChips, heavenly_chips_gastos: Game.heavenlyChipsSpent, ganho_prestige: live.prestige.gain, ganho_chips: live.prestige.gain, ascensoes: Game.resets, upgrades: up.filter(function (u) { return u.pool === 'prestige'; })}, live.prestige),
+        interruptores: prefs, legado: Object.assign({prestige: Game.prestige, heavenly_chips: Game.heavenlyChips, heavenly_chips_gastos: Game.heavenlyChipsSpent, ganho_prestige: live.prestige.gain, ganho_chips: live.prestige.gain, ascensoes: Game.resets, modo_ascensao: Game.ascensionMode, cookies_para_proximo_prestige: read(function () { return Math.max(0, Game.HowManyCookiesReset(Math.floor(Game.HowMuchPrestige(Game.cookiesEarned + Game.cookiesReset)) + 1) - Game.cookiesEarned - Game.cookiesReset); }), upgrades: up.filter(function (u) { return u.pool === 'prestige'; }).map(function (u) { return Object.assign({canAfford: u.can_buy}, u); })}, live.prestige),
         save_string: Game.ready ? Game.WriteSave(1) : null};
     }
-    function execute(inputAction) {
+    async function execute(inputAction) {
       var started = Date.now(), action, result;
       try {
         action = schema.validate(inputAction);
         var spec = schema.actions[action.type];
         need(Game.ready, 'Game is not ready.', 'not_ready');
         if (['cookies', 'buildings', 'store', 'lumps', 'garden', 'pantheon', 'grimoire', 'stock', 'dragon', 'santa', 'seasons', 'gifts'].indexOf(spec.group) !== -1) playing();
-        result = handlers[action.type](action);
+        result = await handlers[action.type](action);
         return {type: action.type, status: result && result.awaiting_confirmation ? 'awaiting_confirmation' : 'succeeded', started_at: started, finished_at: Date.now(), result: result || null};
       } catch (e) {
         return {type: inputAction && inputAction.type, status: 'failed', started_at: started, finished_at: Date.now(), error: {code: e.code || 'execution_error', message: e.message, may_have_side_effects: !!action}};

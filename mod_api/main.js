@@ -1,6 +1,7 @@
 (function(){"use strict";
 
-var PORT=8000,MAX_LOGS=300,_logs=[],_panelOpen=false,_panelEl=null,_logAreaEl=null,_statusEl=null;
+var _configuredPort=Number(new URLSearchParams(location.search).get('bridgePort'));
+var PORT=_configuredPort||8000,MAX_LOGS=300,_logs=[],_panelOpen=false,_panelEl=null,_logAreaEl=null,_statusEl=null;
 var _paused=false,_backoffUntil=0,_pauseBtn=null,_needSlowRebuild=false;
 var _lastSlowState={};
 var _control=null,_pollBusy=false,_pendingReceipts=[];
@@ -204,8 +205,8 @@ function buildState(){
   if(_control&&state.control)state.control=Object.assign({},state.control,{live:_control.liveState()});
   return state;
 }
-function executeAction(action){
-  var receipt=_control.execute(action);
+async function executeAction(action){
+  var receipt=await _control.execute(action);
   if(action._bridge)receipt.id=action._bridge.id;
   _needSlowRebuild=true;
   log(receipt.status==="failed"?"error":"info",receipt.status+" "+action.type+(receipt.error?" · "+receipt.error.message:""));
@@ -266,7 +267,7 @@ Game.registerMod("cookie_ai_bridge",{
         var batch=_pendingReceipts.slice();
         return request('/action/results',{results:batch}).then(function(){_pendingReceipts.splice(0,batch.length);persistReceipts();});
       }).then(function(){return request('/action/next');})
-        .then(function(a){if(a){var receipt=executeAction(a);if(receipt.id){_pendingReceipts.push(receipt);persistReceipts();}}})
+        .then(async function(a){if(a){var receipt=await executeAction(a);if(receipt.id){_pendingReceipts.push(receipt);persistReceipts();}}})
         .catch(function(e){_backoffUntil=Date.now()+5000;setStatus(false,'offline/error (5s)');log('error',e.message);})
         .finally(function(){_pollBusy=false;});
     });
@@ -295,7 +296,7 @@ Game.registerMod("cookie_ai_bridge",{
       try{
         var d=JSON.parse(str);
         if(d&&typeof d.porta==='number'&&d.porta>0&&d.porta<65536){
-          PORT=d.porta;
+          PORT=_configuredPort||d.porta;
           // Sync the panel input if it was already created (init ran before load)
           var inp=document.getElementById("cookiebridge-port-input");
           if(inp)inp.value=PORT;

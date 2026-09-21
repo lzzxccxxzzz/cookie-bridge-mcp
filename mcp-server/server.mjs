@@ -8,7 +8,7 @@ import schema from "../mod_api/control-schema.js";
 const BRIDGE_URL = (process.env.COOKIE_BRIDGE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
 const REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.COOKIE_BRIDGE_TIMEOUT_MS) || 10000);
 const RESULT_TIMEOUT_MS = Math.max(0, Math.min(60000, Number(process.env.COOKIE_BRIDGE_RESULT_TIMEOUT_MS) || 10000));
-const terminal = new Set(["succeeded", "failed", "awaiting_confirmation", "cancelled", "expired"]);
+const terminal = new Set(["succeeded", "failed", "awaiting_confirmation", "cancelled", "expired", "indeterminate"]);
 
 class BridgeError extends Error {
   constructor(message, details) { super(message); this.name = "BridgeError"; this.details = details; }
@@ -38,7 +38,7 @@ function tool(handler) {
   return async (args) => {
     try {
       const value = await handler(args || {});
-      return { ...(value && ["failed", "cancelled", "expired"].includes(value.status) ? { isError: true } : {}),
+      return { ...(value && ["failed", "cancelled", "expired", "indeterminate"].includes(value.status) ? { isError: true } : {}),
         content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
     } catch (error) {
       return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: error.message, details: error.details, bridge_url: BRIDGE_URL }, null, 2) }] };
